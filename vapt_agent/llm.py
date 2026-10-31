@@ -2,13 +2,18 @@
 invents CVEs/scores, and never chooses a tool that scope.check() has not already approved. If no API
 key is configured, the rules-engine rationale strings already attached to each PlanStep are used as-is
 and the system runs in pure "rules-engine" mode, which is fully demonstrable without network access.
+
+Plan-step *arbitration* (ranking/keeping/deferring candidates) lives in reasoning.py, which applies a
+much stricter closed-set validation than a free-text rewrite would allow -- see its module docstring.
+This module is left with the one LLM use that is pure prose generation over already-finalized facts:
+the report's executive summary.
 """
 from __future__ import annotations
 
 import json
 import os
 
-from .models import Assessment, Finding, PlanStep
+from .models import Assessment, Finding
 
 _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
@@ -16,26 +21,6 @@ _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 def _client():
     import anthropic
     return anthropic.Anthropic()
-
-
-def explain_plan(a: Assessment, plan: list[PlanStep]) -> None:
-    """Rewrite each step's rationale in clearer prose. Facts (tool/target/preset) are fixed inputs;
-    the model may only restate why, grounded in the evidence refs already attached to the step."""
-    client = _client()
-    for step in plan:
-        prompt = (
-            "You are explaining one step of an authorized penetration-test plan to a human analyst. "
-            "Rewrite the rationale in 1-2 plain sentences. Do not invent tools, targets, findings, or "
-            "CVEs; use only the facts given.\n\n"
-            f"tool={step.tool} target={step.target} preset={step.preset}\n"
-            f"evidence_refs={step.depends_on_evidence}\n"
-            f"current_rationale={step.rationale}"
-        )
-        resp = client.messages.create(model=_MODEL, max_tokens=150,
-                                      messages=[{"role": "user", "content": prompt}])
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
-        if text:
-            step.rationale = text
 
 
 def summarize_assessment(a: Assessment, findings: list[Finding]) -> str:
