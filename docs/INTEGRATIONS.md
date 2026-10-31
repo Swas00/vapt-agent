@@ -14,6 +14,16 @@ agent at report time, and it appears on every generated PDF report (section 7).
 | **Burp Suite** | **Import-only** | Parses Burp issue-export XML (name, severity, confidence, CWE, classification, remediation). | Live scanning requires Burp Suite **Professional**'s REST API, which is licensed and was not available for this build; **not implemented**, not misrepresented as available. |
 | **Metasploit** | **Live, human-approved only** | `msfconsole -x "use <analyst-named module>; set RHOSTS ...; check; exit"` — runs only after a recorded `Approval` with `state=="approved"`, only the module the analyst explicitly named, and only in Metasploit's own `check` command (non-exploitative where the module supports it). The agent never selects a module or fires autonomously. | Requires `msfconsole` on `PATH` and a lab target. Interpretation of console output ("validated" / "not_reproducible" / "inconclusive") is a simple text match on Metasploit's own `check` phrasing, not an independent proof engine. |
 
+## Live-wiring verification status (this build)
+
+| Tool | Verified how |
+|---|---|
+| Nmap | **Live-verified**: real `nmap` binary installed (`brew install nmap`) and run via subprocess against `127.0.0.1` in `live_demo.py` and `tests/test_live_scanning.py`. |
+| Nikto | **Live-verified**: real `nikto` binary installed and run via subprocess against a local HTTP service in `live_demo.py` and `tests/test_live_scanning.py`; triggered automatically by the adaptive planner after Nmap found the port. |
+| OWASP ZAP | **Code-path verified, not against the real daemon**: ZAP's desktop app is Gatekeeper-disabled in Homebrew on this machine and was not downloaded/run (no untrusted binary execution). `tests/test_zap_live_wiring.py` runs the adapter's actual HTTP control flow (spider status polling, passive-scan queue polling, alert retrieval) against a local stub that implements ZAP's own documented REST contract — a real `ZAP_URL`/`ZAP_API_KEY` daemon is a drop-in replacement with no code changes. |
+| Nessus / OpenVAS / Burp | Import-only by design (licensed products) — verified via their real export-file formats in `tests/test_adapters.py`. |
+| Metasploit | Approval-gating logic verified in `tests/test_orchestrator_e2e.py::test_metasploit_execution_requires_approved_state`. The `msfconsole` binary itself was **not installed** in this build (heavy Ruby/PostgreSQL stack); the gate gets exercised, the actual subprocess call does not. |
+
 ## Honesty notes
 
 - "Live" above means *this codebase* can invoke the tool as a subprocess or API call on the machine

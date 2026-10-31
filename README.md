@@ -60,6 +60,15 @@ recorded fixture outputs):
 # -> data/sample_report.pdf
 ```
 
+**Live scanning demo** (real `nmap` + `nikto` subprocesses against `127.0.0.1` only — this machine's
+own loopback interface serving a throwaway local HTTP server started by the script; never a
+third-party host):
+
+```bash
+brew install nmap nikto     # one-time
+.venv/bin/python live_demo.py
+```
+
 **Interactive API + UI**:
 
 ```bash
@@ -67,11 +76,13 @@ recorded fixture outputs):
 # then open http://127.0.0.1:8000/ui/
 ```
 
-**Tests** (27 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring, full
-orchestrator pipeline end-to-end, approval gating):
+**Tests** (30 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring, full
+orchestrator pipeline end-to-end, approval gating, live nmap/nikto subprocess runs, ZAP wiring):
 
 ```bash
 .venv/bin/python -m pytest -q
+# 30 tests: scope, all 6 parsers, correlation/dedup, risk scoring, full orchestrator e2e,
+# approval gating, + live nmap/nikto subprocess runs and ZAP REST-contract wiring
 ```
 
 ## Dependencies & licensing
