@@ -16,6 +16,7 @@ from . import frameworks
 from .adapters import integration_matrix
 from .llm import summarize_assessment
 from .models import Assessment, Finding
+from .risk import describe_cvss_vector
 
 SEV_COLOR = {"critical": colors.HexColor("#7f1d1d"), "high": colors.HexColor("#c2410c"),
              "medium": colors.HexColor("#a16207"), "low": colors.HexColor("#15803d"),
@@ -30,6 +31,104 @@ def _esc(s) -> str:
     if s is None:
         return ""
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# Plain-English phrasing of what each risk.py exposure class could lead to if exploited --
+# deliberately generic/categorical (never specific to one finding's actual payload or outcome,
+# since that was never observed), used only to ground the report's impact statement.
+EXPOSURE_IMPACT_TEXT = {
+    "remote_admin": "remote administrative access to the host",
+    "file_share": "unauthorized access to files or shared data on the host",
+    "database": "unauthorized access to, or modification of, data held in the database",
+    "web": "compromise of the web application, the data it handles, or its users",
+    "host-level": "broader compromise of the host itself",
+    "other": "compromise of the affected service",
+}
+
+
+def _status_clause(f: Finding) -> str:
+    """Grounded in the finding's own recorded status/validation -- never a severity-based guess."""
+    if f.validation_status == "validated":
+        return "This finding has been confirmed through approved active validation."
+    if f.validation_status == "not_reproducible":
+        return ("An approved active-validation attempt could not reproduce this finding; treat the "
+               "severity below with that in mind.")
+    if len(f.source_tools) > 1:
+        return (f"This finding was independently corroborated by {len(f.source_tools)} tools "
+               f"({_esc(', '.join(f.source_tools))}).")
+    if f.status == "false_positive_candidate":
+        return "This finding is flagged as a possible false positive pending analyst review."
+    src = f.source_tools[0] if f.source_tools else "an unspecified tool"
+    return (f"This finding is currently 'suspected', reported by a single tool ({_esc(src)}), and "
+           "has not yet been independently corroborated or actively validated.")
+
+
+def impact_statement(f: Finding) -> str:
+    """Business + technical impact prose for one finding, built only from fields already on the
+    Finding and its risk_breakdown -- asset criticality, exposure class, CVSS vector components,
+    and corroboration/validation status. Nothing here is invented beyond what was already scored."""
+    rb = f.risk_breakdown or {}
+    asset_impact = rb.get("asset_impact") or {}
+    crit = asset_impact.get("criticality", "medium")
+    crit_set_by = asset_impact.get("set_by", "default")
+    expo_class = (rb.get("exposure") or {}).get("class", "other")
+    tech_phrase = EXPOSURE_IMPACT_TEXT.get(expo_class, EXPOSURE_IMPACT_TEXT["other"])
+    vector_clause = describe_cvss_vector(f.cvss_vector)
+
+    business = (f"<b>Business impact:</b> {_esc(f.asset)} is treated as {crit}-criticality "
+               f"({'set by the analyst' if crit_set_by == 'analyst' else 'the scope default, not '
+                'analyst-confirmed'}) in this assessment's scope. {_status_clause(f)}")
+    technical = (f"<b>Technical impact:</b> if exploited, this finding could allow "
+                f"{tech_phrase}" + (f", {_esc(vector_clause)}." if vector_clause else "."))
+    return business + " " + technical
+
+
+def _stats_rows(a: Assessment) -> list[list[str]]:
+    """At-a-glance figures for the executive summary, computed only from what's already on the
+    Assessment -- no new analysis, just a more scannable restatement of counts the body text
+    already implies."""
+    prio = {"P1": 0, "P2": 0, "P3": 0, "P4": 0}
+    for f in a.findings:
+        if f.priority in prio:
+            prio[f.priority] += 1
+    confirmed = sum(1 for f in a.findings if f.status == "confirmed")
+    suspected = sum(1 for f in a.findings if f.status == "suspected")
+    fp = sum(1 for f in a.findings if f.status == "false_positive_candidate")
+    validated = sum(1 for f in a.findings if f.validation_status == "validated")
+    tools_ok = sorted({r.tool for r in a.runs if r.status == "ok"})
+    return [
+        ["Total correlated findings", str(len(a.findings))],
+        ["Priority P1 / P2 / P3 / P4", f"{prio['P1']} / {prio['P2']} / {prio['P3']} / {prio['P4']}"],
+        ["Confirmed / Suspected / Possible false positive", f"{confirmed} / {suspected} / {fp}"],
+        ["Actively validated (human-approved)", str(validated)],
+        ["Tools with a successful run", (f"{len(tools_ok)} ({', '.join(tools_ok)})" if tools_ok else "0")],
+        ["Human approval decisions recorded", str(len(a.approvals))],
+    ]
+
+
+def _stats_table(a: Assessment) -> Table:
+    t = Table(_stats_rows(a), colWidths=[8 * cm, 9 * cm])
+    t.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e2e8f0")),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+    ]))
+    return t
+
+
+def _assets_tested_rows(a: Assessment) -> list[tuple[str, int, int]]:
+    """(asset, distinct open ports observed, finding count) for every asset this assessment
+    actually touched -- distinct from the authorized *scope* (which may be a wider range/CIDR
+    than what was ever reachable or imported)."""
+    ports_by_host: dict[str, set[int]] = {}
+    for s in a.services:
+        ports_by_host.setdefault(s.host, set()).add(s.port)
+    findings_by_host: dict[str, int] = {}
+    for f in a.findings:
+        findings_by_host[f.asset] = findings_by_host.get(f.asset, 0) + 1
+    hosts = sorted(set(ports_by_host) | set(findings_by_host))
+    return [(h, len(ports_by_host.get(h, set())), findings_by_host.get(h, 0)) for h in hosts]
 
 
 def _styles():
@@ -89,7 +188,8 @@ def _finding_block(f: Finding, ss) -> list:
     out.append(Paragraph(f"<b>Supporting evidence</b> (source tool(s): {_esc(', '.join(f.source_tools))}):",
                          ss["Body"]))
     for e in f.evidence[:6]:
-        out.append(Paragraph(f"[{_esc(e.tool)} | {_esc(e.raw_ref)} | {_esc(e.timestamp)}]", ss["Small"]))
+        sha = f" | sha256={e.artifact_sha256[:16]}…" if e.artifact_sha256 else ""
+        out.append(Paragraph(f"[{_esc(e.tool)} | {_esc(e.raw_ref)} | {_esc(e.timestamp)}{_esc(sha)}]", ss["Small"]))
         out.append(Paragraph(_esc(e.snippet), ss["Mono"]))
     if len(f.evidence) > 6:
         out.append(Paragraph(f"...and {len(f.evidence) - 6} more evidence item(s) in the audit log.", ss["Small"]))
@@ -119,6 +219,8 @@ def generate(a: Assessment, out_path: Path) -> Path:
     story.append(Paragraph(_esc(summarize_assessment(a, a.findings)), ss["Body"]))
     story.append(Paragraph(f"Scope: {_esc(', '.join(a.scope.targets))}", ss["Small"]))
     story.append(Paragraph(f"Original request: “{_esc(a.request)}”", ss["Small"]))
+    story.append(Spacer(1, 6))
+    story.append(_stats_table(a))
 
     story.append(Paragraph("2. Assessment Methodology", ss["H2"]))
     story.append(Paragraph(
@@ -135,6 +237,18 @@ def generate(a: Assessment, out_path: Path) -> Path:
           f"{_esc(', '.join(a.scope.exclusions)) or 'none'}. Active validation permitted: "
           f"{a.scope.allow_active_validation}. {_esc(a.scope.permissions_note)}")
     story.append(Paragraph(roe, ss["Small"]))
+    story.append(Paragraph("Assets actually tested (discovered or referenced by an ingested tool "
+                          "result -- may be narrower than the full authorized scope above):", ss["Body"]))
+    asset_rows = [["Asset", "Open ports observed", "Findings"]] + \
+        [[host, str(ports), str(count)] for host, ports, count in _assets_tested_rows(a)]
+    if len(asset_rows) > 1:
+        at = Table(asset_rows, colWidths=[7 * cm, 5 * cm, 5 * cm])
+        at.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                               ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+                               ("FONTSIZE", (0, 0), (-1, -1), 7.5)]))
+        story.append(at)
+    else:
+        story.append(Paragraph("No assets had any in-scope service or finding recorded yet.", ss["Small"]))
     story.append(Paragraph("Tool execution summary:", ss["Body"]))
     rows = [["Tool", "Mode", "Target", "Status", "Services", "Findings"]]
     for r in a.runs:
@@ -169,12 +283,18 @@ def generate(a: Assessment, out_path: Path) -> Path:
     crit_high = [f for f in a.findings if f.severity in ("critical", "high")]
     if crit_high:
         story.append(Paragraph(
-            f"{len(crit_high)} finding(s) rated critical/high pose immediate business risk (data exposure, "
-            "service compromise, or unauthorized access) and should be remediated before the system handles "
-            "production or sensitive data.", ss["Body"]))
+            f"{len(crit_high)} finding(s) rated critical/high pose immediate business risk and should be "
+            "remediated before the system handles production or sensitive data. Each is summarized below "
+            "with a business and technical impact statement grounded in its own asset criticality, exposure "
+            "class, and (where the source tool reported one) CVSS vector -- never a generic severity label "
+            "alone.", ss["Body"]))
         for f in crit_high[:15]:
-            story.append(Paragraph(f"• <b>{_esc(f.title)}</b> ({_esc(f.asset)}): "
-                                   f"{_esc(f.solution) or 'See detailed finding above.'}", ss["Small"]))
+            story.append(Paragraph(f"<b>{_esc(f.title)}</b> ({_esc(f.asset)}" +
+                                   (f":{f.port}" if f.port else "") + ")", ss["Body"]))
+            story.append(Paragraph(impact_statement(f), ss["Small"]))
+            story.append(Paragraph(f"<b>Remediation:</b> {_esc(f.solution) or 'See detailed finding above.'}",
+                                   ss["Small"]))
+            story.append(Spacer(1, 4))
     else:
         story.append(Paragraph("No critical or high severity findings were identified in this assessment.",
                                ss["Body"]))
