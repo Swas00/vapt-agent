@@ -115,15 +115,13 @@ changes needed, same adapters.
 | CVE | ✅ throughout |
 | CVSS | ✅ throughout, with `cvss_estimated` honesty flag |
 | CWE | ✅ throughout |
-| MITRE ATT&CK | ⬜ **not yet referenced anywhere** — no technique tagging on findings |
-| NIST CSF 2.0 | ⬜ **not yet referenced** |
+| MITRE ATT&CK | ✅ `Finding.mitre_attack`, populated by `frameworks.tag_finding()` for a small, deliberately conservative set of well-established mappings (named vulnerabilities like MS17-010/EternalBlue → T1210; CWE-89/79 → T1190; CWE-287/anonymous access → T1078). No blanket tagging — most findings correctly get none. Every tag is paired with an `[inference]` note saying it's an indicative reference, not an observed adversary action. Shown in both the PDF (§4) and the UI finding cards. |
+| NIST CSF 2.0 | ✅ `frameworks.CSF_ALIGNMENT_NOTE`, a fixed paragraph in report §2 mapping the assessment's own *workflow* (not the target environment) to Govern/Identify/Protect/Detect/Respond, explicitly disclaimed as process description, not a compliance claim. |
 
-⬜ **To do**: add an optional `mitre_attack: list[str]` field on `Finding`, populate it for a small
-allow-listed set of well-known mappings (e.g. MS17-010 → T1210, anonymous FTP → T1078/initial access,
-reflected XSS → T1189-adjacent client-side techniques), and add one sentence to the report's methodology
-section noting which NIST CSF 2.0 functions (Identify/Protect/Detect/Respond) the assessment touched.
-Framework use doesn't establish compliance (the PS says so explicitly) — this is about demonstrable
-rigor, not a checkbox.
+Framework use doesn't establish compliance (the PS says so explicitly, and the report repeats that
+disclaimer verbatim) — this closes the gap as demonstrable rigor, not a checkbox. See `vapt_agent/
+frameworks.py` and `tests/test_frameworks.py` (11 tests, including that unrelated/generic findings
+get no tag).
 
 ## 9. Required Deliverables (9.1–9.6)
 
@@ -191,8 +189,8 @@ attributable (`audit.py`).
    `docs/ARCHITECTURE.md` §2a and `tests/test_reasoning.py` / `tests/test_planner.py`.
 2. **Commit a tracked sample report** — `data/` is gitignored; add a sample PDF somewhere tracked
    (e.g. `docs/sample_report.pdf`) for deliverable 9.3.
-3. **Add MITRE ATT&CK / NIST CSF 2.0 references** — small, mechanical, closes an explicit requirement
-   gap in §8.
+3. ~~**Add MITRE ATT&CK / NIST CSF 2.0 references**~~ — **done**, see §8: `frameworks.py`, wired into
+   `orchestrator.analyse()`, shown in both the PDF report and the UI.
 4. **Polish report §7.5** — explicit business-impact sentence per critical/high finding, not just a
    remediation line.
 5. ~~**Finding-driven (not just service-driven) replanning**~~ — **done**, see item 1.
