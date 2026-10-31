@@ -107,12 +107,17 @@ class PlanStep(BaseModel):
     preset: str = "default"
     rationale: str
     depends_on_evidence: list[str] = Field(default_factory=list)   # raw refs that triggered this step
+    trigger_finding_id: Optional[str] = None   # set when this step was proposed in reaction to a Finding
     intrusive: bool = False
     mode: Literal["live", "import"] = "live"
     status: Literal["proposed", "approved", "running", "done", "failed", "skipped", "rejected"] = "proposed"
     origin: Literal["rules", "llm"] = "rules"
     run_id: Optional[str] = None
     skip_reason: str = ""
+    kind: Literal["discovery", "service", "finding"] = "service"
+    priority_score: Optional[float] = None     # 0..1, higher = more urgent; rule- or LLM-derived
+    llm_explanation: str = ""                  # set only when `origin == "llm"` actually ranked this step
+    alternatives_considered: list[dict] = Field(default_factory=list)   # other candidates weighed in the same batch
 
 
 class Approval(BaseModel):
