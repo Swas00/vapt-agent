@@ -38,8 +38,205 @@
   .step-rationale { color:var(--muted); font-size:12.5px; margin-top:4px; }
   .finding-title { font-weight:600; }
 </style>
+<style>
+  /* ---- Hero (visual intro only — no functional elements live here) ---- */
+  .hero { position:relative; width:100%; height:100vh; min-height:640px; overflow:hidden; background:#02040a; }
+  .hero-canvas { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  .hero-canvas.is-hidden { display:none; }
+  .hero-fallback-bg {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(60% 50% at 20% 20%, rgba(56,189,248,.20), transparent 60%),
+      radial-gradient(55% 45% at 80% 30%, rgba(167,139,250,.18), transparent 60%),
+      radial-gradient(70% 60% at 50% 100%, rgba(34,211,238,.12), transparent 60%),
+      #02040a;
+  }
+  .hero-overlay {
+    position:relative; z-index:2; height:100%; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:24px;
+    color:#e5e7eb;
+  }
+  .hero-badge {
+    display:inline-flex; align-items:center; gap:8px; padding:8px 18px; margin-bottom:28px;
+    background:rgba(56,189,248,.08); border:1px solid rgba(125,211,252,.28); border-radius:999px;
+    font-size:12.5px; color:#bae6fd; backdrop-filter:blur(8px); opacity:0; animation:hero-fade-down .8s ease-out forwards;
+  }
+  .hero-title { margin:0; font-size:clamp(34px, 6.2vw, 72px); line-height:1.08; font-weight:800; letter-spacing:-.01em; }
+  .hero-title span {
+    display:block; background-clip:text; -webkit-background-clip:text; color:transparent;
+    opacity:0; animation:hero-fade-up .8s ease-out forwards;
+  }
+  .hero-title .grad-1 { background-image:linear-gradient(90deg,#7dd3fc,#38bdf8,#818cf8); animation-delay:.15s; }
+  .hero-title .grad-2 { background-image:linear-gradient(90deg,#a78bfa,#818cf8,#22d3ee); animation-delay:.35s; }
+  .hero-subtitle {
+    max-width:760px; margin:22px auto 0; font-size:clamp(14.5px, 1.6vw, 18px); font-weight:300;
+    line-height:1.6; color:#cbd5e1; opacity:0; animation:hero-fade-up .8s ease-out .55s forwards;
+  }
+  .hero-chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:20px;
+    opacity:0; animation:hero-fade-up .8s ease-out .7s forwards; }
+  .hero-chip { font-size:11.5px; color:#a5b4c3; border:1px solid rgba(148,163,184,.25);
+    background:rgba(148,163,184,.06); padding:5px 12px; border-radius:999px; }
+  .hero-ctas { display:flex; flex-wrap:wrap; gap:14px; justify-content:center; margin-top:34px;
+    opacity:0; animation:hero-fade-up .8s ease-out .85s forwards; }
+  .hero-btn { font-size:15px; font-weight:600; padding:13px 26px; border-radius:999px; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center; transition:transform .2s ease, box-shadow .2s ease, background .2s ease; }
+  .hero-btn-primary { background:linear-gradient(90deg,#38bdf8,#818cf8); color:#021018; border:none; }
+  .hero-btn-primary:hover { transform:translateY(-1px) scale(1.03); box-shadow:0 10px 30px -8px rgba(56,189,248,.5); }
+  .hero-btn-secondary { background:rgba(148,163,184,.08); color:#e5e7eb; border:1px solid rgba(148,163,184,.28); }
+  .hero-btn-secondary:hover { transform:translateY(-1px) scale(1.03); background:rgba(148,163,184,.16); }
+  .hero-scroll-hint { position:absolute; left:50%; bottom:22px; transform:translateX(-50%); z-index:2;
+    font-size:11.5px; color:#64748b; letter-spacing:.04em; opacity:0; animation:hero-fade-up 1s ease-out 1.1s forwards; }
+  @keyframes hero-fade-down { from { opacity:0; transform:translateY(-16px);} to { opacity:1; transform:translateY(0);} }
+  @keyframes hero-fade-up { from { opacity:0; transform:translateY(22px);} to { opacity:1; transform:translateY(0);} }
+  @media (prefers-reduced-motion: reduce) {
+    .hero-badge, .hero-title span, .hero-subtitle, .hero-chips, .hero-ctas, .hero-scroll-hint { animation:none; opacity:1; }
+  }
+</style>
 </head>
 <body>
+<section class="hero" id="hero" aria-label="VAPT Agent introduction">
+  <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
+  <div class="hero-fallback-bg" id="heroFallbackBg" aria-hidden="true"></div>
+  <div class="hero-overlay">
+    <div class="hero-badge">🛡️&nbsp;<span>DataOps Innovation Hackathon — PS-1: AI-Powered Unified VAPT Agent</span></div>
+    <h1 class="hero-title">
+      <span class="grad-1">Recon to Report,</span>
+      <span class="grad-2">Reasoned by AI.</span>
+    </h1>
+    <p class="hero-subtitle">
+      A scope-bound, evidence-driven agent that plans, correlates, and prioritizes real vulnerability
+      findings across Nmap, Nessus, OpenVAS, Nikto, ZAP, Burp and Metasploit — explaining every
+      decision, and never running an active exploit without your approval.
+    </p>
+    <div class="hero-chips">
+      <span class="hero-chip">Adaptive, evidence-driven planning</span>
+      <span class="hero-chip">Cross-tool correlation &amp; dedup</span>
+      <span class="hero-chip">Human-approved active validation</span>
+      <span class="hero-chip">Hash-chained audit trail</span>
+    </div>
+    <div class="hero-ctas">
+      <button class="hero-btn hero-btn-primary" id="heroStartBtn" type="button">Start an Assessment</button>
+      <a class="hero-btn hero-btn-secondary" href="https://github.com/Swas00/vapt-agent" target="_blank" rel="noopener">View Source on GitHub</a>
+    </div>
+  </div>
+  <div class="hero-scroll-hint">↓ scroll for the live agent</div>
+</section>
+<script>
+  // Self-contained animated shader background for the hero section only. Vanilla WebGL2 (no
+  // framework) so it drops into this static page without any build step; degrades to a plain
+  // gradient background (#heroFallbackBg) if WebGL2 isn't available. Touches nothing outside
+  // #hero -- the app below is untouched.
+  (function heroShader() {
+    const canvas = document.getElementById('heroCanvas');
+    const fallback = document.getElementById('heroFallbackBg');
+    const gl = canvas.getContext('webgl2');
+    if (!gl) { canvas.classList.add('is-hidden'); return; }
+    fallback.style.display = 'none';
+
+    const vertexSrc = `#version 300 es
+precision highp float;
+in vec4 position;
+void main(){gl_Position=position;}`;
+
+    const fragmentSrc = `#version 300 es
+precision highp float;
+out vec4 O;
+uniform vec2 resolution;
+uniform float time;
+#define FC gl_FragCoord.xy
+#define T time
+#define R resolution
+#define MN min(R.x,R.y)
+float rnd(vec2 p){p=fract(p*vec2(12.9898,78.233));p+=dot(p,p+34.56);return fract(p.x*p.y);}
+float noise(in vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f);float a=rnd(i),b=rnd(i+vec2(1,0)),c=rnd(i+vec2(0,1)),d=rnd(i+1.);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}
+float fbm(vec2 p){float t=.0,a=1.;mat2 m=mat2(1.,-.5,.2,1.2);for(int i=0;i<5;i++){t+=a*noise(p);p*=2.*m;a*=.5;}return t;}
+float clouds(vec2 p){float d=1.,t=.0;for(float i=.0;i<3.;i++){float a=d*fbm(i*10.+p.x*.2+.2*(1.+i)*p.y+d+i*i+p);t=mix(t,d,a);d=a;p*=2./(i+1.);}return t;}
+void main(void){
+  vec2 uv=(FC-.5*R)/MN,st=uv*vec2(2,1);
+  vec3 col=vec3(0);
+  float bg=clouds(vec2(st.x+T*.5,-st.y));
+  uv*=1.-.3*(sin(T*.2)*.5+.5);
+  for(float i=1.;i<12.;i++){
+    uv+=.1*cos(i*vec2(.1+.01*i,.8)+i*i+T*.5+.1*uv.x);
+    vec2 p=uv;
+    float d=length(p);
+    col+=.00125/d*(cos(sin(i)*vec3(2,3,4.2))+1.);
+    float b=noise(i+p+bg*1.731);
+    col+=.002*b/length(max(p,vec2(b*p.x*.02,p.y)));
+    col=mix(col,vec3(bg*.08,bg*.14,bg*.25),d);
+  }
+  O=vec4(col,1);
+}`;
+
+    function compile(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        console.warn('hero shader compile error:', gl.getShaderInfoLog(sh));
+        return null;
+      }
+      return sh;
+    }
+
+    const vs = compile(gl.VERTEX_SHADER, vertexSrc);
+    const fs = compile(gl.FRAGMENT_SHADER, fragmentSrc);
+    if (!vs || !fs) { canvas.classList.add('is-hidden'); fallback.style.display = ''; return; }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn('hero shader link error:', gl.getProgramInfoLog(program));
+      canvas.classList.add('is-hidden'); fallback.style.display = '';
+      return;
+    }
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, 1, -1, -1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+    const positionLoc = gl.getAttribLocation(program, 'position');
+    gl.enableVertexAttribArray(positionLoc);
+    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const uResolution = gl.getUniformLocation(program, 'resolution');
+    const uTime = gl.getUniformLocation(program, 'time');
+
+    let dpr = Math.max(1, 0.5 * (window.devicePixelRatio || 1));
+    function resize() {
+      canvas.width = Math.max(1, Math.floor(window.innerWidth * dpr));
+      canvas.height = Math.max(1, Math.floor(window.innerHeight * dpr));
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    let raf;
+    function frame(nowMs) {
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.uniform2f(uResolution, canvas.width, canvas.height);
+      gl.uniform1f(uTime, nowMs * 1e-3);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+
+    // Pause rendering while the tab is hidden -- cheap, avoids burning GPU/battery in a
+    // background tab; purely a perf nicety, no functional effect.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { cancelAnimationFrame(raf); }
+      else { raf = requestAnimationFrame(frame); }
+    });
+  })();
+
+  document.getElementById('heroStartBtn').addEventListener('click', () => {
+    const target = document.getElementById('app') || document.querySelector('header');
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+  });
+</script>
+<div id="app">
 <header>
   <h1>🛡️ VAPT Agent</h1>
   <span>Scope-bound, evidence-driven, human-in-the-loop assessment assistant — lab-only</span>
@@ -90,6 +287,7 @@
     <div id="approvals"></div>
   </div>
 </main>
+</div>
 <script>
 const $ = s => document.querySelector(s);
 let currentId = null, current = null;
