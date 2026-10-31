@@ -12,6 +12,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
 
+from . import frameworks
 from .adapters import integration_matrix
 from .llm import summarize_assessment
 from .models import Assessment, Finding
@@ -19,6 +20,16 @@ from .models import Assessment, Finding
 SEV_COLOR = {"critical": colors.HexColor("#7f1d1d"), "high": colors.HexColor("#c2410c"),
              "medium": colors.HexColor("#a16207"), "low": colors.HexColor("#15803d"),
              "info": colors.HexColor("#334155")}
+
+
+def _esc(s) -> str:
+    """Escape text that may originate from scanner output, a finding, or free-text analyst input
+    before it goes into a ReportLab Paragraph -- Paragraph parses its argument as a small XML
+    dialect, so an unescaped '&', '<', or '>' can corrupt rendering or be misread as markup.
+    Never applied to markup this module writes itself (e.g. '<b>...</b>' literals)."""
+    if s is None:
+        return ""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _styles():
@@ -49,39 +60,46 @@ def _finding_table_row(sev_counts: dict) -> Table:
 def _finding_block(f: Finding, ss) -> list:
     out = []
     color = SEV_COLOR.get(f.severity, colors.black)
-    header = f'<font color="{color.hexval()}"><b>[{f.priority or "?"}] {f.severity.upper()}</b></font> — {f.title}'
+    header = (f'<font color="{color.hexval()}"><b>[{f.priority or "?"}] {f.severity.upper()}</b></font> '
+             f'— {_esc(f.title)}')
     out.append(Paragraph(header, ss["H2"]))
-    meta = (f"Finding ID: {f.id} &nbsp;|&nbsp; Asset: {f.asset}" +
-            (f":{f.port}/{f.proto}" if f.port else "") +
-            f" &nbsp;|&nbsp; Status: {f.status} &nbsp;|&nbsp; Validation: {f.validation_status} "
+    meta = (f"Finding ID: {_esc(f.id)} &nbsp;|&nbsp; Asset: {_esc(f.asset)}" +
+            (f":{f.port}/{_esc(f.proto)}" if f.port else "") +
+            f" &nbsp;|&nbsp; Status: {_esc(f.status)} &nbsp;|&nbsp; Validation: {_esc(f.validation_status)} "
             f"&nbsp;|&nbsp; Confidence: {f.confidence:.2f}")
     out.append(Paragraph(meta, ss["Small"]))
     if f.cvss is not None:
         est = " (estimated from severity band, not tool-reported)" if f.cvss_estimated else ""
-        out.append(Paragraph(f"CVSS: {f.cvss}{est}" + (f" ({f.cvss_vector})" if f.cvss_vector else ""), ss["Small"]))
+        out.append(Paragraph(f"CVSS: {f.cvss}{est}" +
+                             (f" ({_esc(f.cvss_vector)})" if f.cvss_vector else ""), ss["Small"]))
     if f.cve or f.cwe or f.owasp:
-        out.append(Paragraph("References: " + ", ".join(f.cve + f.cwe + f.owasp), ss["Small"]))
+        out.append(Paragraph("References: " + _esc(", ".join(f.cve + f.cwe + f.owasp)), ss["Small"]))
+    if f.mitre_attack:
+        out.append(Paragraph("MITRE ATT&amp;CK (indicative reference mapping, not an observed "
+                             "adversary action): " + _esc("; ".join(f.mitre_attack)), ss["Small"]))
     out.append(Paragraph(f"Risk score: {f.risk_score} — " +
-                         ", ".join(f"{k}={v}" for k, v in f.risk_breakdown.items() if not isinstance(v, dict)),
+                         _esc(", ".join(f"{k}={v}" for k, v in f.risk_breakdown.items()
+                                       if not isinstance(v, dict))),
                          ss["Small"]))
-    out.append(Paragraph(f.description or "(no description captured)", ss["Body"]))
+    out.append(Paragraph(_esc(f.description) or "(no description captured)", ss["Body"]))
     if f.inference:
         out.append(Paragraph("<b>AI-generated reasoning (not directly observed):</b>", ss["Body"]))
         for i in f.inference:
-            out.append(Paragraph("• " + i, ss["Small"]))
-    out.append(Paragraph(f"<b>Supporting evidence</b> (source tool(s): {', '.join(f.source_tools)}):", ss["Body"]))
+            out.append(Paragraph("• " + _esc(i), ss["Small"]))
+    out.append(Paragraph(f"<b>Supporting evidence</b> (source tool(s): {_esc(', '.join(f.source_tools))}):",
+                         ss["Body"]))
     for e in f.evidence[:6]:
-        out.append(Paragraph(f"[{e.tool} | {e.raw_ref} | {e.timestamp}]", ss["Small"]))
-        out.append(Paragraph(e.snippet.replace("<", "&lt;").replace(">", "&gt;"), ss["Mono"]))
+        out.append(Paragraph(f"[{_esc(e.tool)} | {_esc(e.raw_ref)} | {_esc(e.timestamp)}]", ss["Small"]))
+        out.append(Paragraph(_esc(e.snippet), ss["Mono"]))
     if len(f.evidence) > 6:
         out.append(Paragraph(f"...and {len(f.evidence) - 6} more evidence item(s) in the audit log.", ss["Small"]))
     if f.solution:
-        out.append(Paragraph(f"<b>Remediation:</b> {f.solution}", ss["Body"]))
+        out.append(Paragraph(f"<b>Remediation:</b> {_esc(f.solution)}", ss["Body"]))
     if f.references:
-        out.append(Paragraph("References: " + "; ".join(f.references), ss["Small"]))
+        out.append(Paragraph("References: " + _esc("; ".join(f.references)), ss["Small"]))
     if f.merged_from:
         out.append(Paragraph(f"(Deduplicated: merged {len(f.merged_from)} overlapping report(s) from "
-                             f"{', '.join(f.source_tools)}.)", ss["Small"]))
+                             f"{_esc(', '.join(f.source_tools))}.)", ss["Small"]))
     out.append(Spacer(1, 8))
     return out
 
@@ -98,9 +116,9 @@ def generate(a: Assessment, out_path: Path) -> Path:
     story.append(Spacer(1, 10))
 
     story.append(Paragraph("1. Executive Summary", ss["H2"]))
-    story.append(Paragraph(summarize_assessment(a, a.findings), ss["Body"]))
-    story.append(Paragraph(f"Scope: {', '.join(a.scope.targets)}", ss["Small"]))
-    story.append(Paragraph(f"Original request: “{a.request}”", ss["Small"]))
+    story.append(Paragraph(_esc(summarize_assessment(a, a.findings)), ss["Body"]))
+    story.append(Paragraph(f"Scope: {_esc(', '.join(a.scope.targets))}", ss["Small"]))
+    story.append(Paragraph(f"Original request: “{_esc(a.request)}”", ss["Small"]))
 
     story.append(Paragraph("2. Assessment Methodology", ss["H2"]))
     story.append(Paragraph(
@@ -108,11 +126,14 @@ def generate(a: Assessment, out_path: Path) -> Path:
         "validation, agent-generated and analyst-approved scan plan, scan orchestration, result "
         "ingestion, cross-tool correlation, risk prioritization, human-approved active validation where "
         "applicable, and report generation. Methodology is informed by NIST SP 800-115, OWASP Top 10, "
-        "CVE/CVSS/CWE, and MITRE ATT&CK where applicable.", ss["Body"]))
+        "CVE/CVSS/CWE, MITRE ATT&amp;CK, and NIST CSF 2.0, where applicable; using these standards and "
+        "frameworks does not, by itself, establish formal compliance with them.", ss["Body"]))
+    story.append(Paragraph("Framework alignment (NIST CSF 2.0):", ss["Body"]))
+    story.append(Paragraph(frameworks.CSF_ALIGNMENT_NOTE, ss["Small"]))
     story.append(Paragraph("Rules of engagement:", ss["Body"]))
-    roe = (f"Authorized targets: {', '.join(a.scope.targets)}. Exclusions: "
-          f"{', '.join(a.scope.exclusions) or 'none'}. Active validation permitted: "
-          f"{a.scope.allow_active_validation}. {a.scope.permissions_note}")
+    roe = (f"Authorized targets: {_esc(', '.join(a.scope.targets))}. Exclusions: "
+          f"{_esc(', '.join(a.scope.exclusions)) or 'none'}. Active validation permitted: "
+          f"{a.scope.allow_active_validation}. {_esc(a.scope.permissions_note)}")
     story.append(Paragraph(roe, ss["Small"]))
     story.append(Paragraph("Tool execution summary:", ss["Body"]))
     rows = [["Tool", "Mode", "Target", "Status", "Services", "Findings"]]
@@ -152,25 +173,26 @@ def generate(a: Assessment, out_path: Path) -> Path:
             "service compromise, or unauthorized access) and should be remediated before the system handles "
             "production or sensitive data.", ss["Body"]))
         for f in crit_high[:15]:
-            story.append(Paragraph(f"• <b>{f.title}</b> ({f.asset}): {f.solution or 'See detailed finding above.'}",
-                                   ss["Small"]))
+            story.append(Paragraph(f"• <b>{_esc(f.title)}</b> ({_esc(f.asset)}): "
+                                   f"{_esc(f.solution) or 'See detailed finding above.'}", ss["Small"]))
     else:
         story.append(Paragraph("No critical or high severity findings were identified in this assessment.",
                                ss["Body"]))
 
     story.append(Paragraph("6. Assessment Limitations", ss["H2"]))
     for lim in (a.limitations or ["None recorded."]):
-        story.append(Paragraph("• " + lim, ss["Small"]))
+        story.append(Paragraph("• " + _esc(lim), ss["Small"]))
     story.append(Paragraph("Assumptions:", ss["Body"]))
-    story.append(Paragraph(f"• LLM reasoning mode: {a.llm_mode}. " +
-                           (" ".join(a.llm_notes) if a.llm_notes else ""), ss["Small"]))
+    story.append(Paragraph(f"• LLM reasoning mode: {_esc(a.llm_mode)}. " +
+                           (_esc(" ".join(a.llm_notes)) if a.llm_notes else ""), ss["Small"]))
     story.append(Paragraph("• CVSS scores marked 'estimated' were derived from the source tool's severity "
                           "band, not independently calculated.", ss["Small"]))
     story.append(Paragraph("Human approvals and outcomes:", ss["Body"]))
     if a.approvals:
         for ap in a.approvals:
-            story.append(Paragraph(f"• [{ap.state}] {ap.action} — decided by {ap.decided_by or 'n/a'} "
-                                   f"at {ap.decided_at or 'n/a'}; outcome: {ap.outcome or 'n/a'}", ss["Small"]))
+            story.append(Paragraph(f"• [{_esc(ap.state)}] {_esc(ap.action)} — decided by "
+                                   f"{_esc(ap.decided_by) or 'n/a'} at {_esc(ap.decided_at) or 'n/a'}; "
+                                   f"outcome: {_esc(ap.outcome) or 'n/a'}", ss["Small"]))
     else:
         story.append(Paragraph("• No active validation was requested or approved in this assessment.", ss["Small"]))
     story.append(Paragraph(f"Assessment timestamps: created {a.created}; report generated at report time.",
