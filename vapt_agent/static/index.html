@@ -180,15 +180,24 @@ function render(){
   $('#events').innerHTML = (current.events||[]).slice().reverse().map(e =>
     `<div class="evt ${e.level}">[${e.ts.split('T')[1].slice(0,8)}] ${e.message}</div>`).join('') || '<div class="mono">No events yet.</div>';
 
-  $('#findings').innerHTML = (current.findings||[]).map(f => `
+  $('#findings').innerHTML = (current.findings||[]).map(f => {
+    const refs = [...(f.cve||[]), ...(f.cwe||[]), ...(f.owasp||[])];
+    const fpBadge = f.status === 'false_positive_candidate'
+      ? '<span class="pill sev-medium" title="Low-confidence, single-source, generic finding">possible false positive</span>' : '';
+    const dupBadge = (f.merged_from||[]).length
+      ? `<span class="pill sev-info" style="opacity:.7" title="Merged from ${f.merged_from.length} duplicate report(s)">⇄ ${f.source_tools.length} tools merged</span>` : '';
+    return `
     <div class="card">
       <div class="row"><span class="pill sev-${f.severity}">${f.priority||''} ${f.severity}</span>
-        <span class="finding-title">${f.title}</span></div>
+        <span class="finding-title">${f.title}</span> ${fpBadge} ${dupBadge}</div>
       <div class="mono">asset=${f.asset}${f.port? ':'+f.port:''} status=${f.status} validation=${f.validation_status}
        confidence=${f.confidence} risk=${f.risk_score} tools=${(f.source_tools||[]).join(',')}</div>
+      ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${refs.join(', ')}</div>` : ''}
+      ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#a78bfa">ATT&amp;CK (indicative): ${f.mitre_attack.join('; ')}</div>` : ''}
       ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' ?
         `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${f.id}','Human-approved check-mode validation of ${f.title} on ${f.asset}')">Request active-validation approval</button>` : ''}
-    </div>`).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
+    </div>`;
+  }).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
 
   $('#approvals').innerHTML = (current.approvals||[]).map(a => `
     <div class="card">
