@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import correlate, planner, risk
+from . import correlate, frameworks, planner, risk
 from .adapters import registry
 from .adapters.infra import Metasploit
 from .audit import AuditLog
@@ -146,6 +146,7 @@ class Orchestrator:
     # ---- analysis --------------------------------------------------------
     def analyse(self, a: Assessment) -> Assessment:
         a.findings = correlate.correlate(a.raw_findings)
+        frameworks.apply(a.findings)
         for f in a.findings:
             risk.score(f, a.scope)
         a.findings = risk.rank(a.findings)

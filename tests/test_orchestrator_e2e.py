@@ -72,6 +72,9 @@ def test_full_pipeline_to_report(orch, assessment, tmp_path):
     ms17 = [f for f in assessment.findings if "MS17-010" in f.title or "CVE-2017-0143" in f.cve]
     assert len(ms17) == 1
     assert set(ms17[0].source_tools) >= {"nmap", "nessus"}
+    assert any(t.startswith("T1210") for t in ms17[0].mitre_attack)   # EternalBlue -> ATT&CK tagged
+    sqli = next(f for f in assessment.findings if f.title == "SQL injection")
+    assert any(t.startswith("T1190") for t in sqli.mitre_attack)
     assert all(f.risk_score is not None for f in assessment.findings)
     assert assessment.findings == sorted(assessment.findings, key=lambda f: -f.risk_score)
 
