@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -Pn --top-ports 1000 -oX - 10.10.10.5">
+<host>
+  <status state="up"/>
+  <address addr="10.10.10.5" addrtype="ipv4"/>
+  <hostnames><hostname name="lab-web01.lab.local" type="PTR"/></hostnames>
+  <ports>
+    <port protocol="tcp" portid="21">
+      <state state="open"/>
+      <service name="ftp" product="vsftpd" version="2.3.4"/>
+      <script id="ftp-anon" output="Anonymous FTP login allowed (FTP code 230)"/>
+    </port>
+    <port protocol="tcp" portid="22">
+      <state state="open"/>
+      <service name="ssh" product="OpenSSH" version="7.2p2"/>
+    </port>
+    <port protocol="tcp" portid="80">
+      <state state="open"/>
+      <service name="http" product="Apache httpd" version="2.4.49"/>
+      <script id="vulners" output="CVE-2021-41773 9.8 https://vulners.com/cve/CVE-2021-41773&#10;CVE-2021-42013 9.8 https://vulners.com/cve/CVE-2021-42013"/>
+    </port>
+    <port protocol="tcp" portid="443">
+      <state state="open"/>
+      <service name="https" product="Apache httpd" version="2.4.49" tunnel="ssl"/>
+      <script id="ssl-enum-ciphers" output="TLSv1.0: supported&#10;TLSv1.1: supported&#10;least strength: D"/>
+    </port>
+    <port protocol="tcp" portid="445">
+      <state state="open"/>
+      <service name="microsoft-ds" product="Samba" version="3.0.20"/>
+      <script id="smb-vuln-ms17-010" output="VULNERABLE: Remote Code Execution vulnerability in Microsoft SMBv1 servers (ms17-010)"/>
+    </port>
+  </ports>
+</host>
+</nmaprun>

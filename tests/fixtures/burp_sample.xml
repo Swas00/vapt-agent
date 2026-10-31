@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<issues>
+  <issue>
+    <serialNumber>1</serialNumber>
+    <name>SQL injection</name>
+    <host ip="10.10.10.5">http://10.10.10.5</host>
+    <path>/product?id=1</path>
+    <location>Parameter: id</location>
+    <severity>High</severity>
+    <confidence>Certain</confidence>
+    <vulnerabilityClassifications>CWE-89</vulnerabilityClassifications>
+    <issueBackground>SQL injection vulnerabilities arise when user-controllable data is incorporated into SQL queries.</issueBackground>
+    <issueDetail>The id parameter appears to be vulnerable to SQL injection.</issueDetail>
+    <remediationBackground>Use parameterized queries for all database access.</remediationBackground>
+  </issue>
+</issues>

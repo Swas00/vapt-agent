@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>VAPT Agent</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#0f172a; --panel:#111827; --line:#1f2937; --text:#e5e7eb; --muted:#94a3b8;
+          --accent:#38bdf8; --crit:#f87171; --high:#fb923c; --med:#facc15; --low:#4ade80; --info:#94a3b8; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header span { color: var(--muted); font-size:12px; }
+  main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 53px); }
+  .col { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
+  .col:last-child { border-right:none; }
+  textarea, input { width:100%; background:#0b1220; color:var(--text); border:1px solid var(--line);
+                     border-radius:6px; padding:8px; font-family:inherit; font-size:13px; }
+  textarea { min-height: 70px; resize:vertical; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  button { background:var(--accent); color:#001018; border:none; border-radius:6px; padding:8px 12px;
+            font-weight:600; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.danger { background:var(--crit); color:#200; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .sev-critical{background:var(--crit);color:#200} .sev-high{background:var(--high);color:#200}
+  .sev-medium{background:var(--med);color:#200} .sev-low{background:var(--low);color:#002}
+  .sev-info{background:var(--info);color:#002}
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; color:var(--muted); white-space:pre-wrap; }
+  .evt { padding:6px 0; border-bottom:1px dashed var(--line); font-size:12.5px; }
+  .evt.decision { color:var(--accent); } .evt.warn { color:var(--high); } .evt.error { color:var(--crit); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:18px 0 8px; }
+  a { color:var(--accent); }
+  .step-rationale { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .finding-title { font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ VAPT Agent</h1>
+  <span>Scope-bound, evidence-driven, human-in-the-loop assessment assistant — lab-only</span>
+</header>
+<main>
+  <div class="col" id="left">
+    <div class="card">
+      <label>Analyst request</label>
+      <textarea id="request" placeholder="e.g. Assess the lab web application and its host for common vulnerabilities before our client demo.">Assess the lab target for common network and web vulnerabilities ahead of the demo.</textarea>
+      <label>Authorized targets (comma-separated)</label>
+      <input id="targets" placeholder="10.10.10.5, app.lab.local" value="10.10.10.5" />
+      <label>Exclusions (comma-separated, optional)</label>
+      <input id="exclusions" placeholder="10.10.10.5:3389" />
+      <label class="row"><input type="checkbox" id="attest" style="width:auto" checked /> &nbsp;I attest these are organizer-provided lab targets</label>
+      <label class="row"><input type="checkbox" id="allowActive" style="width:auto" /> &nbsp;Allow active validation (still requires per-finding approval)</label>
+      <button id="createBtn" style="margin-top:12px">Start assessment</button>
+    </div>
+
+    <div id="assessmentMeta"></div>
+
+    <h2>Plan</h2>
+    <div id="plan"></div>
+
+    <h2>Import a tool result</h2>
+    <div class="card">
+      <label>Tool</label>
+      <select id="importTool" style="width:100%;background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
+        <option value="nessus">Nessus (.nessus)</option>
+        <option value="openvas">OpenVAS/Greenbone (XML)</option>
+        <option value="nikto">Nikto (JSON)</option>
+        <option value="zap">OWASP ZAP (JSON)</option>
+        <option value="burp">Burp Suite (issue XML)</option>
+      </select>
+      <input type="file" id="importFile" style="margin-top:8px" />
+      <button id="importBtn" style="margin-top:8px">Import</button>
+    </div>
+
+    <button id="analyseBtn" class="ghost" style="width:100%;margin-top:8px">Correlate &amp; prioritize findings</button>
+    <button id="reportBtn" style="width:100%;margin-top:8px">Generate VAPT PDF report</button>
+  </div>
+
+  <div class="col" id="right">
+    <h2>Activity / Decision Log</h2>
+    <div id="events"></div>
+    <h2>Findings</h2>
+    <div id="findings"></div>
+    <h2>Approvals (active validation)</h2>
+    <div id="approvals"></div>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let currentId = null, current = null;
+
+async function api(path, opts={}) {
+  const res = await fetch(path, { headers: {'Content-Type':'application/json'}, ...opts });
+  if (!res.ok) { alert(await res.text()); throw new Error('api error'); }
+  return res.json();
+}
+
+function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
+
+$('#createBtn').onclick = async () => {
+  const body = {
+    request: $('#request').value,
+    scope: {
+      targets: split($('#targets').value),
+      exclusions: split($('#exclusions').value),
+      lab_attestation: $('#attest').checked,
+      allow_active_validation: $('#allowActive').checked,
+      permissions_note: 'Entered via UI by analyst for lab demonstration.'
+    }
+  };
+  current = await api('/assessments', {method:'POST', body: JSON.stringify(body)});
+  currentId = current.id;
+  render();
+};
+
+async function refresh(){ current = await api(`/assessments/${currentId}`); render(); }
+
+$('#analyseBtn').onclick = async () => { if(!currentId) return; await api(`/assessments/${currentId}/analyse`, {method:'POST'}); refresh(); };
+$('#reportBtn').onclick = () => { if(!currentId) return; window.open(`/assessments/${currentId}/report`, '_blank'); };
+
+$('#importBtn').onclick = async () => {
+  if(!currentId) return alert('Start an assessment first');
+  const f = $('#importFile').files[0];
+  if(!f) return alert('Choose a file');
+  const fd = new FormData(); fd.append('file', f);
+  const res = await fetch(`/assessments/${currentId}/import/${$('#importTool').value}`, {method:'POST', body: fd});
+  if(!res.ok) return alert(await res.text());
+  refresh();
+};
+
+async function runStep(stepId){ await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=true&by=analyst`, {method:'POST'});
+  await api(`/assessments/${currentId}/plan/${stepId}/run`, {method:'POST'}); refresh(); }
+async function rejectStep(stepId){ await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false&by=analyst`, {method:'POST'}); refresh(); }
+
+async function requestApproval(findingId, action){
+  await api(`/assessments/${currentId}/approvals`, {method:'POST', body: JSON.stringify({finding_id: findingId, action})});
+  refresh();
+}
+async function decideApproval(id, approved){
+  const reason = approved ? 'Analyst approved controlled validation.' : prompt('Reason for denial?') || 'denied';
+  await api(`/assessments/${currentId}/approvals/${id}/decision?approved=${approved}&by=analyst&reason=${encodeURIComponent(reason)}`, {method:'POST'});
+  if (approved) await api(`/assessments/${currentId}/approvals/${id}/execute`, {method:'POST'});
+  refresh();
+}
+
+function render(){
+  if(!current) return;
+  $('#assessmentMeta').innerHTML = `<div class="card"><b>${current.id}</b><br><span class="mono">state: ${current.state}</span></div>`;
+
+  $('#plan').innerHTML = (current.plan||[]).map(s => `
+    <div class="card">
+      <div class="row"><b>${s.tool}</b> → <span class="mono">${s.target}</span> <span class="pill sev-info">${s.preset}</span>
+        <span class="pill sev-${s.status==='rejected'?'critical':'low'}">${s.status}</span></div>
+      <div class="step-rationale">${s.rationale}</div>
+      ${s.status==='proposed' ? `<div class="row" style="margin-top:6px">
+        <button onclick="runStep('${s.id}')">Approve &amp; run</button>
+        <button class="ghost" onclick="rejectStep('${s.id}')">Reject</button></div>` : ''}
+    </div>`).join('') || '<div class="mono">No steps yet.</div>';
+
+  $('#events').innerHTML = (current.events||[]).slice().reverse().map(e =>
+    `<div class="evt ${e.level}">[${e.ts.split('T')[1].slice(0,8)}] ${e.message}</div>`).join('') || '<div class="mono">No events yet.</div>';
+
+  $('#findings').innerHTML = (current.findings||[]).map(f => `
+    <div class="card">
+      <div class="row"><span class="pill sev-${f.severity}">${f.priority||''} ${f.severity}</span>
+        <span class="finding-title">${f.title}</span></div>
+      <div class="mono">asset=${f.asset}${f.port? ':'+f.port:''} status=${f.status} validation=${f.validation_status}
+       confidence=${f.confidence} risk=${f.risk_score} tools=${(f.source_tools||[]).join(',')}</div>
+      ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' ?
+        `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${f.id}','Human-approved check-mode validation of ${f.title} on ${f.asset}')">Request active-validation approval</button>` : ''}
+    </div>`).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
+
+  $('#approvals').innerHTML = (current.approvals||[]).map(a => `
+    <div class="card">
+      <div>${a.action}</div>
+      <div class="mono">state=${a.state} outcome=${a.outcome||'-'}</div>
+      ${a.state==='pending' ? `<div class="row" style="margin-top:6px">
+        <button onclick="decideApproval('${a.id}', true)">Approve &amp; execute</button>
+        <button class="ghost" onclick="decideApproval('${a.id}', false)">Deny</button></div>` : ''}
+    </div>`).join('') || '<div class="mono">No approval requests yet.</div>';
+}
+</script>
+</body>
+</html>

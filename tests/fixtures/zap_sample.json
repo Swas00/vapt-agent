@@ -1,0 +1,31 @@
+{
+  "site": [
+    {
+      "@name": "http://10.10.10.5",
+      "alerts": [
+        {
+          "pluginid": "40012",
+          "alert": "Cross Site Scripting (Reflected)",
+          "riskcode": "3",
+          "confidence": "2",
+          "cweid": "79",
+          "desc": "<p>Reflected XSS allows an attacker to execute script in the context of the victim's browser.</p>",
+          "solution": "<p>Encode all user-controllable output.</p>",
+          "reference": "<p>https://owasp.org/www-community/attacks/xss/</p>",
+          "instances": [{"uri": "http://10.10.10.5/search?q=%3Cscript%3Ealert(1)%3C/script%3E", "method": "GET", "param": "q", "evidence": "<script>alert(1)</script>"}]
+        },
+        {
+          "pluginid": "10038",
+          "alert": "Content Security Policy (CSP) Header Not Set",
+          "riskcode": "1",
+          "confidence": "3",
+          "cweid": "693",
+          "desc": "<p>CSP is an added layer of security.</p>",
+          "solution": "<p>Ensure CSP is in place.</p>",
+          "reference": "",
+          "instances": [{"uri": "http://10.10.10.5/", "method": "GET", "param": "", "evidence": ""}]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<NessusClientData_v2>
+<Report name="lab">
+<ReportHost name="10.10.10.5">
+  <ReportItem port="445" protocol="tcp" severity="4" pluginID="97833" pluginName="MS17-010: SMB RCE" svc_name="microsoft-ds">
+    <description>The remote host is affected by multiple vulnerabilities in SMBv1.</description>
+    <synopsis>Arbitrary code can be executed on the remote host.</synopsis>
+    <solution>Apply the vendor patch (MS17-010). Disable SMBv1.</solution>
+    <cvss3_base_score>8.1</cvss3_base_score>
+    <cvss3_vector>CVSS:3.0/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H</cvss3_vector>
+    <cve>CVE-2017-0143</cve>
+    <cwe>284</cwe>
+    <exploit_available>true</exploit_available>
+    <plugin_output>Host is missing MS17-010.</plugin_output>
+    <see_also>https://msrc.microsoft.com/update-guide/vulnerability/CVE-2017-0143</see_also>
+  </ReportItem>
+</ReportHost>
+</Report>
+</NessusClientData_v2>

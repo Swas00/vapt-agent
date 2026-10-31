@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<report>
+  <results>
+    <result id="r1">
+      <name>SSL/TLS: Deprecated TLSv1.0 and TLSv1.1 Protocol Detection</name>
+      <host>10.10.10.5</host>
+      <port>443/tcp</port>
+      <threat>Medium</threat>
+      <severity>5.9</severity>
+      <qod><value>80</value></qod>
+      <description>The remote service accepts connections using TLS 1.0 and/or TLS 1.1.</description>
+      <nvt oid="1.3.6.1.4.1.25623.1.0.117274">
+        <name>SSL/TLS: Deprecated Protocol</name>
+        <cvss_base>5.9</cvss_base>
+        <solution>Disable TLS 1.0 and 1.1; enable TLS 1.2 or higher.</solution>
+      </nvt>
+    </result>
+  </results>
+</report>

@@ -1,0 +1,10 @@
+{
+  "host": "lab-web01.lab.local",
+  "ip": "10.10.10.5",
+  "port": "80",
+  "vulnerabilities": [
+    {"id": "1", "method": "GET", "url": "/", "msg": "The X-Content-Type-Options header is not set. This could allow the user agent to render the content differently from the way it was intended.", "OSVDB": "0"},
+    {"id": "2", "method": "GET", "url": "/", "msg": "The anti-clickjacking X-Frame-Options header is not present.", "OSVDB": "0"},
+    {"id": "3", "method": "GET", "url": "/cgi-bin/", "msg": "/cgi-bin/ directory is browsable and may allow unauthorized access to internal scripts.", "OSVDB": "3092"}
+  ]
+}
