@@ -143,7 +143,7 @@ get no tag).
 | 3 | Execute/import multi-tool assessments with genuine status | ✅ | run/import buttons, real `ToolRun.status` |
 | 4 | Normalization, correlation, dup/false-positive handling, uncertainty | 🟡 | works, but UI doesn't strongly *visualize* merged-finding count / false-positive tag — ⬜ polish the finding card to show `merged_from` and highlight `false_positive_candidate` |
 | 5 | Severity/risk prioritization + explicit approval checkpoint | ✅ | priority badges + approve/deny buttons |
-| 6 | Download report, trace a finding back to source evidence | 🟡 | evidence snippet + raw_ref shown in PDF; ⬜ could also surface the raw file's SHA-256 in the report for a stronger chain-of-custody story |
+| 6 | Download report, trace a finding back to source evidence | ✅ | evidence snippet + raw_ref + a truncated SHA-256 of the raw artifact file shown per evidence item in the PDF, for a verifiable chain-of-custody story |
 | 7 | Safe failure handling + honest unsupported-integration disclosure | ✅ | `ToolRun.status` failure modes recorded + shown in limitations; integration matrix is honest |
 
 ⬜ **To do before the live demo**: deliberately rehearse one scope-rejection (scan something outside
@@ -160,7 +160,7 @@ live, not just in theory.
 | Correlation & False Positives | 15 | 🟡 good, heuristic is simple | medium |
 | Risk Prioritization | 10 | ✅ strong, transparent formula | low |
 | Safety & Scope Control | 10 | ✅ strong | low |
-| Report Quality | 10 | 🟡 good, could add business-impact depth per finding + framework references | medium |
+| Report Quality | 10 | ✅ per-finding business + technical impact statements grounded in asset criticality/exposure class/CVSS vector, an at-a-glance stats table, an "assets actually tested" table distinct from scope, MITRE/CSF framework references, and evidence SHA-256 traceability | low |
 | Efficiency & Robustness | 5 | ✅ decent | low |
 
 ## 12. Near-Perfect Solution Characteristics (§12) — self-check
@@ -191,12 +191,15 @@ attributable (`audit.py`).
    (e.g. `docs/sample_report.pdf`) for deliverable 9.3.
 3. ~~**Add MITRE ATT&CK / NIST CSF 2.0 references**~~ — **done**, see §8: `frameworks.py`, wired into
    `orchestrator.analyse()`, shown in both the PDF report and the UI.
-4. **Polish report §7.5** — explicit business-impact sentence per critical/high finding, not just a
-   remediation line.
+4. ~~**Polish report §7.5**~~ — **done**: `impact_statement()` in `report.py` builds a grounded
+   business + technical impact sentence per critical/high finding from asset criticality, exposure
+   class, CVSS-vector C/I/A components (parsed in `risk.py`), and corroboration/validation status —
+   never a generic severity label. Also added: an at-a-glance stats table (§1), an "assets actually
+   tested" table distinct from the authorized scope (§2), and evidence SHA-256 per item (§4).
 5. ~~**Finding-driven (not just service-driven) replanning**~~ — **done**, see item 1.
-6. **UI polish** for judging-checklist item 6 (surface evidence file SHA-256 in the PDF). Item 4
-   (dedup/false-positive visibility) is now partly addressed by the plan's "alternatives considered"
-   panel; findings themselves could still show `merged_from` count more prominently.
+6. ~~**UI polish for judging-checklist item 6**~~ — **done**, evidence SHA-256 now in the PDF (see
+   item 4 above). Item 4 (dedup/false-positive visibility) is now addressed both on the plan's
+   "alternatives considered" panel and on finding cards (dedup/false-positive badges, §UI).
 7. **Rehearse failure/rejection demo moments** before the live round.
 8. Optional/lower priority: remediation tracking, retest/diff, export formats, real multi-user auth,
    DNS/SNMP planning triggers — genuinely "bonus," worth doing only if time remains after 2–4.

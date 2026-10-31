@@ -76,14 +76,13 @@ brew install nmap nikto     # one-time
 # then open http://127.0.0.1:8000/ui/
 ```
 
-**Tests** (34 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring, full
-orchestrator pipeline end-to-end, approval gating, live nmap/nikto subprocess runs, ZAP and
-Metasploit subprocess/REST wiring):
+**Tests** (88 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring & CVSS-vector
+parsing, candidate-based planning + bounded LLM arbitration (incl. a prompt-injection test), MITRE/
+CSF tagging, report generation, full orchestrator pipeline end-to-end, approval gating, live nmap/
+nikto subprocess runs, ZAP and Metasploit subprocess/REST wiring):
 
 ```bash
 .venv/bin/python -m pytest -q
-# 30 tests: scope, all 6 parsers, correlation/dedup, risk scoring, full orchestrator e2e,
-# approval gating, + live nmap/nikto subprocess runs and ZAP REST-contract wiring
 ```
 
 ## Dependencies & licensing
