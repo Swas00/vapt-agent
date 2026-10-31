@@ -37,6 +37,27 @@ def test_scope_rejects_out_of_scope_import_target(orch, assessment):
     assert all(f.asset == "10.10.10.5" for f in assessment.raw_findings)
 
 
+def test_import_run_target_becomes_the_real_asset_not_the_file_path(orch, assessment):
+    run = orch.import_result(assessment, "nmap", FIX / "nmap_sample.xml")
+    assert run.target == "10.10.10.5"   # not the fixture file path
+    assert "nmap_sample.xml" not in run.target
+
+
+def test_analyse_proposes_a_finding_driven_corroboration_step(orch, assessment):
+    """The new behaviour: a severe, single-source finding (not just an open port) triggers a
+    plan step -- this is the finding-driven replanning the rules-only, service-driven planner
+    did not previously have."""
+    orch.import_result(assessment, "nessus", FIX / "nessus_sample.nessus")
+    before = len(assessment.plan)
+    orch.analyse(assessment)
+    after = len(assessment.plan)
+    assert after > before
+    finding_driven = [s for s in assessment.plan if s.kind == "finding"]
+    assert finding_driven
+    assert finding_driven[0].trigger_finding_id in {f.id for f in assessment.findings}
+    assert any("Suggests requesting human-approved active validation" in e.message for e in assessment.events)
+
+
 def test_full_pipeline_to_report(orch, assessment, tmp_path):
     orch.import_result(assessment, "nmap", FIX / "nmap_sample.xml")
     orch.import_result(assessment, "nikto", FIX / "nikto_sample.json")

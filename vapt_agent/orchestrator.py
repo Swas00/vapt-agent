@@ -109,17 +109,39 @@ class Orchestrator:
         a.services.extend(kept_services)
         a.raw_findings.extend(kept_findings)
         run.services, run.findings = len(kept_services), len(kept_findings)
+        if run.mode == "import":
+            # An import's `target` defaulted to the raw file path (we don't know the asset until
+            # it's parsed). Replace it with the actual in-scope asset(s) found inside the file --
+            # both for a readable report tool-execution-summary table, and because later planning
+            # logic checks "has tool X already covered asset Y" by looking at ToolRun.target.
+            assets = sorted({s.host for s in kept_services} | {f.asset for f in kept_findings})
+            if assets:
+                run.target = ", ".join(assets)
         self.audit.append("agent", "tool.ingested", assessment=a.id, run=run.id,
                           services=len(kept_services), findings=len(kept_findings))
-        new_steps = planner.expand_from_services(a, kept_services)
+        new_steps = planner.plan_from_services(a, kept_services)
+        self._absorb_new_steps(a, new_steps, f"evidence in {run.tool} output")
+
+    def _absorb_new_steps(self, a: Assessment, new_steps: list[PlanStep], trigger_desc: str) -> None:
+        """Append a freshly-ranked batch of steps to the plan and audit each one, including the
+        ones the ranking decided to defer (status='skipped') -- those are logged too, so "why
+        didn't the agent run X" has a real, inspectable answer rather than silence."""
+        proposed = [s for s in new_steps if s.status == "proposed"]
+        skipped = [s for s in new_steps if s.status == "skipped"]
         for s in new_steps:
             a.plan.append(s)
-            self.audit.append("agent", "plan.step_proposed", assessment=a.id, step=s.id,
-                              tool=s.tool, target=s.target, depends_on=s.depends_on_evidence,
-                              rationale=s.rationale)
-        if new_steps:
+            self.audit.append("agent", f"plan.step_{s.status}", assessment=a.id, step=s.id,
+                              tool=s.tool, target=s.target, kind=s.kind, origin=s.origin,
+                              depends_on=s.depends_on_evidence, trigger_finding=s.trigger_finding_id,
+                              rationale=s.rationale, priority=s.priority_score)
+        if proposed:
             a.events.append(Event(level="decision",
-                                  message=f"{len(new_steps)} new step(s) proposed from evidence in {run.tool} output."))
+                                  message=f"{len(proposed)} new step(s) proposed from {trigger_desc}"
+                                          f"{' (' + a.llm_mode + ')' if proposed[0].origin == 'llm' else ''}."))
+        for s in skipped:
+            a.events.append(Event(level="info",
+                                  message=f"Considered {s.tool} -> {s.target} ({s.preset}) from {trigger_desc} "
+                                          f"but deferred: {s.skip_reason}"))
 
     # ---- analysis --------------------------------------------------------
     def analyse(self, a: Assessment) -> Assessment:
@@ -134,6 +156,18 @@ class Orchestrator:
         a.events.append(Event(level="decision",
                               message=f"Correlated {len(a.raw_findings)} raw findings into "
                                       f"{len(a.findings)} ({dup} duplicate(s) folded)."))
+
+        # Finding-driven replanning: react to severity/confidence, not just to an open port.
+        new_steps = planner.plan_from_findings(a)
+        self._absorb_new_steps(a, new_steps, "a correlated finding's severity/confidence")
+
+        # Surface (never auto-create) active-validation approval suggestions for the analyst.
+        for prop in planner.propose_validation_steps(a, a.findings):
+            self.audit.append("agent", "approval.suggested", assessment=a.id,
+                              finding=prop["finding_id"], suggested_action=prop["action"], rationale=prop["rationale"])
+            a.events.append(Event(level="decision",
+                                  message=f"Suggests requesting human-approved active validation for "
+                                          f"finding {prop['finding_id']}: {prop['rationale']}"))
         return a
 
     # ---- human-in-the-loop approval for active validation ---------------
