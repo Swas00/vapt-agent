@@ -82,3 +82,40 @@ def score(f: Finding, scope: ScopeModel) -> Finding:
 
 def rank(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: (-(f.risk_score or 0), -SEVERITY_ORDER[f.severity], f.asset, f.port or 0))
+
+
+_AV = {"N": "network", "A": "adjacent-network", "L": "local", "P": "physical"}
+_CIA = {"N": "none", "L": "low", "H": "high"}
+
+
+def parse_cvss_vector(vector: str | None) -> dict[str, str]:
+    """Parse a CVSS v3/v3.1 vector string (e.g. 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H')
+    into its component metrics. Returns {} for anything missing or not in the expected shape --
+    this is read-only parsing of a value a tool already reported, never a score we compute."""
+    if not vector:
+        return {}
+    parts = {}
+    for seg in vector.split("/"):
+        if ":" in seg:
+            k, _, v = seg.partition(":")
+            parts[k] = v
+    return parts
+
+
+def describe_cvss_vector(vector: str | None) -> str | None:
+    """Plain-English clause from a CVSS vector's own metrics -- 'network-exploitable, with high
+    confidentiality, integrity, and availability impact if successful' -- or None if the vector is
+    absent/unparseable. Never invents an impact level the vector doesn't itself state."""
+    m = parse_cvss_vector(vector)
+    if "C" not in m or "I" not in m or "A" not in m:
+        return None
+    av = _AV.get(m.get("AV", ""), None)
+    cia = []
+    for label, key in (("confidentiality", "C"), ("integrity", "I"), ("availability", "A")):
+        level = _CIA.get(m.get(key, ""))
+        if level and level != "none":
+            cia.append(f"{level} {label}")
+    prefix = f"{av}-exploitable, with " if av else "with "
+    if not cia:
+        return f"{prefix}no confidentiality, integrity, or availability impact reported by this vector"
+    return prefix + ", ".join(cia) + " impact if successful"

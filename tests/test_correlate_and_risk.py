@@ -1,6 +1,6 @@
 from vapt_agent.correlate import correlate
 from vapt_agent.models import Finding, ScopeModel
-from vapt_agent.risk import score
+from vapt_agent.risk import describe_cvss_vector, parse_cvss_vector, score
 
 
 def test_duplicate_findings_merge_without_losing_evidence():
@@ -63,3 +63,38 @@ def test_false_positive_candidate_scores_lower():
     score(a, scope)
     score(b, scope)
     assert b.risk_score < a.risk_score
+
+
+def test_parse_cvss_vector_extracts_metrics():
+    m = parse_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+    assert m == {"CVSS": "3.1", "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+                "C": "H", "I": "H", "A": "H"}
+
+
+def test_parse_cvss_vector_handles_missing_or_malformed():
+    assert parse_cvss_vector(None) == {}
+    assert parse_cvss_vector("") == {}
+    assert parse_cvss_vector("not a vector") == {}
+
+
+def test_describe_cvss_vector_high_cia():
+    desc = describe_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+    assert "network-exploitable" in desc
+    assert "high confidentiality" in desc and "high integrity" in desc and "high availability" in desc
+
+
+def test_describe_cvss_vector_partial_impact_only_lists_nonzero():
+    # Confidentiality-only impact (e.g. an info-disclosure vuln): integrity/availability stay "none"
+    desc = describe_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N")
+    assert "high confidentiality" in desc
+    assert "integrity" not in desc and "availability" not in desc
+
+
+def test_describe_cvss_vector_none_for_missing_vector():
+    assert describe_cvss_vector(None) is None
+    assert describe_cvss_vector("") is None
+
+
+def test_describe_cvss_vector_never_fabricates_beyond_what_vector_states():
+    # A vector with no C/I/A at all (malformed/incomplete) must not produce an impact description
+    assert describe_cvss_vector("CVSS:3.1/AV:N/AC:L") is None
