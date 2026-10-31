@@ -76,8 +76,9 @@ brew install nmap nikto     # one-time
 # then open http://127.0.0.1:8000/ui/
 ```
 
-**Tests** (30 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring, full
-orchestrator pipeline end-to-end, approval gating, live nmap/nikto subprocess runs, ZAP wiring):
+**Tests** (34 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring, full
+orchestrator pipeline end-to-end, approval gating, live nmap/nikto subprocess runs, ZAP and
+Metasploit subprocess/REST wiring):
 
 ```bash
 .venv/bin/python -m pytest -q

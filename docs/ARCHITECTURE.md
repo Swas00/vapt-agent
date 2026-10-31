@@ -57,5 +57,5 @@ append-only, hash-chained file — tampering with any entry breaks the chain, wh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python demo.py                 # headless: fixtures -> report, no live scanning
 .venv/bin/uvicorn vapt_agent.api:app --reload   # then open http://127.0.0.1:8000/ui/
-.venv/bin/python -m pytest -q             # 30 tests: scope, adapters, correlation, risk, e2e, live scans
+.venv/bin/python -m pytest -q             # 34 tests: scope, adapters, correlation, risk, e2e, live scans
 ```
