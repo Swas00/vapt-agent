@@ -269,6 +269,36 @@ def test_unauthenticated_upload_writes_nothing_to_disk(env):
     assert not [p for p in new if p.name != "audit.log"], new
 
 
+# ---- upload filename path traversal (found while hardening this endpoint) ----------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("../../etc/passwd", "passwd"),
+    ("/abs/path/report.xml", "report.xml"),
+    ("..\\..\\win\\report.xml", "report.xml"),
+    ("scan results (1).xml", "scan_results__1_.xml"),
+    (".hidden", "hidden"),
+    ("..", "upload"),
+    ("", "upload"),
+    (None, "upload"),
+])
+def test_safe_filename(raw, expected):
+    assert api._safe_filename(raw) == expected
+
+
+def test_safe_filename_is_length_bounded():
+    assert len(api._safe_filename("a" * 500 + ".xml")) <= 120
+
+
+@pytest.mark.parametrize("evil", ["../../escape.nessus", "..\\..\\escape.nessus", "/tmp/escape.nessus"])
+def test_traversing_upload_names_cannot_escape_the_assessment_directory(env, evil):
+    a = create_assessment(env)
+    r = import_nessus(env, a["id"], filename=evil)
+    assert r.status_code == 200, r.text
+    assert (env.tmp / a["id"] / "raw" / "escape.nessus").exists()
+    assert not (env.tmp.parent / "escape.nessus").exists()
+    assert not Path("/tmp/escape.nessus").exists()
+
+
 # ---- startup behaviour -------------------------------------------------------------------------
 
 def test_dev_mode_when_unconfigured_prints_a_token_and_persists_it_privately(tmp_path, monkeypatch, capsys):

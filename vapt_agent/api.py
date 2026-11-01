@@ -9,6 +9,7 @@ records. Read-only GET routes stay open so the audit trail and integration matri
 """
 from __future__ import annotations
 
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -93,6 +94,14 @@ def _get(assessment_id: str) -> Assessment:
     return a
 
 
+def _safe_filename(name: str | None) -> str:
+    """Reduce a client-supplied upload name to a plain basename of safe characters, so it can
+    never steer the write outside the assessment's raw/ directory ('../../x', absolute paths)."""
+    base = Path((name or "").replace("\\", "/")).name
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", base).lstrip(".")
+    return cleaned[:120] or "upload"
+
+
 @app.get("/whoami")
 def whoami(actor: str = Depends(require_analyst)):
     """Validate a token and report which identity it maps to (the UI's sign-in check)."""
@@ -148,7 +157,7 @@ def run_step(assessment_id: str, step_id: str, actor: str = Depends(require_anal
 async def import_result(assessment_id: str, tool: str, file: UploadFile = File(...),
                         actor: str = Depends(require_analyst)):
     a = _get(assessment_id)
-    dest = DATA_DIR / assessment_id / "raw" / file.filename
+    dest = DATA_DIR / assessment_id / "raw" / _safe_filename(file.filename)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(await file.read())
     try:
