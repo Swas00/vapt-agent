@@ -1,0 +1,7 @@
+{
+  "name": "vapt-agent-frontend-tests",
+  "private": true,
+  "description": "jsdom-based tests for vapt_agent/static/index.html. Dev-only; the app itself has no JS build step.",
+  "scripts": { "test": "node --test ui.test.js" },
+  "devDependencies": { "jsdom": "^27.0.0" }
+}
