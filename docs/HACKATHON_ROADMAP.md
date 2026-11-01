@@ -115,7 +115,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 
 | Feature | Verification | Why it matters |
 |---|---|---|
-| **Any authentication on the API** | `grep -n "CORSMiddleware\|HTTPBasic\|APIKey\|OAuth\|Depends" api.py` → zero hits | Anyone reaching the port can approve active validation, impersonate any `by=` identity in the audit trail, pull reports. Directly weakens §13's "every action is attributable." |
+| ~~**Any authentication on the API**~~ **(RESOLVED — CR-1, see §8)** | was: `grep … api.py` → zero hits | Anyone reaching the port can approve active validation, impersonate any `by=` identity in the audit trail, pull reports. Directly weakens §13's "every action is attributable." |
 | **API-level rate limiting** | No `slowapi`/limiter/middleware anywhere; not in `requirements.txt` | A buggy or malicious client can hammer `/plan/{id}/run` (triggers real scans) or `/approvals/{id}/execute` (triggers Metasploit) with no throttle |
 | **Upload size/type limits** | `dest.write_bytes(await file.read())` — whole file buffered, no size check, no content-type allow-list before parsing | A large/malformed upload can exhaust memory; defusedxml protects against XXE but not against a 2GB file |
 | **Async/background scan execution** | `def run_step` synchronous (see 2.2) | No "monitor running jobs" experience; no cancel |
@@ -144,7 +144,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [ ] A10. Persist `Assessment` objects to disk (even flat JSON per-id) so a server restart during a demo doesn't lose state
 
 ### B. Security and Privacy
-- [ ] B1. **Minimal actor authentication** — at minimum, a shared bearer token / API key required on all mutating endpoints, with the authenticated identity (not a client-supplied string) written to `by`/`decided_by`
+- [x] B1. **Minimal actor authentication** *(done — CR-1)* — at minimum, a shared bearer token / API key required on all mutating endpoints, with the authenticated identity (not a client-supplied string) written to `by`/`decided_by`
 - [ ] B2. Upload size cap (e.g. 25MB) enforced before `file.read()`, with a clear 413 response
 - [ ] B3. Upload content-type/extension allow-list per tool (reject a `.xml` labeled import that isn't well-formed XML before handing it to the parser)
 - [ ] B4. Rate limiting on scan-triggering and Metasploit-execution endpoints specifically (not just globally)
@@ -183,7 +183,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 ### F. Testing and Reliability
 - [ ] F1. `tests/test_api.py` using FastAPI `TestClient`: create → import → analyse → approve → execute → report, through real HTTP, not direct orchestrator calls
 - [ ] F2. Negative-path API tests: malformed JSON body, missing required field, wrong content-type on upload, oversized upload (once B2 lands)
-- [ ] F3. Auth tests once B1 lands: unauthenticated request rejected, wrong token rejected, `by`/`decided_by` reflects the authenticated identity not a client-supplied string
+- [x] F3. Auth tests once B1 lands *(done — `tests/test_auth.py`, `tests/test_api_auth.py`)*: unauthenticated request rejected, wrong token rejected, `by`/`decided_by` reflects the authenticated identity not a client-supplied string
 - [ ] F4. Concurrency test: two simultaneous `run_step` calls on the same assessment don't corrupt `a.plan`/`a.runs` (today nothing guards against a race; low risk at hackathon scale, real at production scale)
 - [ ] F5. Accessibility test pass (axe-core or manual) once C1–C2 land
 - [ ] F6. Load/perf sanity: confirm report generation stays fast with 100+ findings (currently only tested with the ~14-finding fixture set)
@@ -241,8 +241,8 @@ Explicitly **not** recommended: adding more LLM calls for their own sake, a chat
 | T1 | Full create→report flow via `TestClient`, not direct orchestrator calls | API/integration | ⬜ No |
 | T2 | Upload >size-cap file → 413 | API, negative | ⬜ No (cap doesn't exist yet) |
 | T3 | Upload a `.xml`-named file containing JSON → clean error, not a stack trace | API, negative | ⬜ No |
-| T4 | Unauthenticated request → 401 | API, auth | ⬜ No (auth doesn't exist yet) |
-| T5 | `by=` reflects authenticated identity, not client-supplied string | Security | ⬜ No |
+| T4 | Unauthenticated request → 401 | API, auth | ✅ Yes (`test_api_auth.py`, parametrized over every POST route + a meta-test) |
+| T5 | `by=` reflects authenticated identity, not client-supplied string | Security | ✅ Yes |
 | T6 | Two concurrent `run_step` calls on one assessment | Concurrency | ⬜ No |
 | T7 | `risk.score()` at CVSS=0, CVSS=10, confidence=0, confidence=1 | Boundary | ⬜ No |
 | T8 | Finding title containing `<script>`, apostrophes, ampersands → renders as inert text | Security/UI | ✅ Yes (jsdom test this session, not yet a committed automated test) |
@@ -264,7 +264,7 @@ doesn't silently regress on the next UI edit.
 
 | ID | Task | Description | Why required | Expected outcome | Frontend | Backend | DB | Security | Depends on | Acceptance criteria |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CR-1 | Minimal API authentication | Require a bearer token (env-configured shared secret, or per-analyst token map) on every mutating endpoint; derive `by`/`decided_by` from the authenticated identity, ignore any client-supplied value | §13 "every action attributable"; currently false — `by=` is free text | Audit trail entries are trustworthy | Add token input to UI, send as header | FastAPI `Depends()` auth guard on all POST routes; `audit.append(actor=...)` uses the verified identity | N/A (in-memory) | Closes the biggest live gap | None | Unauthenticated POST → 401; `by=` in the response always matches the token's mapped identity, never the query string |
+| ✅ **DONE** — CR-1 | Minimal API authentication | Require a bearer token (env-configured shared secret, or per-analyst token map) on every mutating endpoint; derive `by`/`decided_by` from the authenticated identity, ignore any client-supplied value | §13 "every action attributable"; currently false — `by=` is free text | Audit trail entries are trustworthy | Add token input to UI, send as header | FastAPI `Depends()` auth guard on all POST routes; `audit.append(actor=...)` uses the verified identity | N/A (in-memory) | Closes the biggest live gap | None | Unauthenticated POST → 401; `by=` in the response always matches the token's mapped identity, never the query string |
 | CR-2 | Upload size + type cap | Read `Content-Length` (or stream with a cap) before buffering; reject >25MB with 413; sniff the first bytes against the declared tool's expected format before parsing | Prevents memory-exhaustion DoS on a public-facing demo instance | A malformed/huge upload fails fast and cleanly | Show the 413 message in the import panel | `UploadFile` size check in `api.import_result` | N/A | Closes an unbounded-memory gap | None | 30MB upload → 413, not a hang or crash |
 | CR-3 | Async scan execution + status polling | Move `run_step`/`execute_approval` to `BackgroundTasks`; add `GET /assessments/{id}/runs/{run_id}` returning live status; UI polls every 1–2s while a run is `running` | PS §5.3 explicitly requires "monitor running jobs" — today it's un-demonstrable | Judges can watch a scan go pending→running→done live | Poll loop + visible spinner/progress on the running step's card | `BackgroundTasks`, a `run_id`→status lookup, `ToolRun` status transitions already exist, just need to be observable mid-flight | N/A | Low (internal only) | None | Click "Approve & run," UI shows "running" within 2s, updates to "done" without a page reload, request returns immediately rather than hanging |
 | CR-4 | Committed sample PDF report | Generate a sample report (already working via `demo.py`) and commit it to a tracked path (`docs/sample_report.pdf`), refreshed whenever report.py changes meaningfully | PS §9.3 deliverable — currently only producible, not present in the repo | Judges can open the PDF directly from the repo without running anything | N/A | N/A | N/A | N/A | None | File exists at a tracked path, opens cleanly, reflects current report.py output |
@@ -370,3 +370,35 @@ The solution is ready when, without any script or hidden setup:
 
 Everything in Tier 5 (Future Scope) is explicitly *not* part of this definition — claiming it would
 be the overclaiming the PS and the hackathon rules both explicitly warn against.
+
+---
+
+## Appendix — CR-1 delivery notes (what actually shipped, and what it surfaced)
+
+**Shipped** (all verified by tests that were mutation-checked — deliberately breaking each guard makes
+the matching test fail):
+- `vapt_agent/auth.py` — per-analyst token map from `VAPT_ANALYST_TOKENS`; dev-mode fallback token
+  persisted `0600`; constant-time comparison against every token; reserved identities; validated at
+  startup; no token ever in an error message, banner (outside dev mode), log, or response.
+- `api.require_analyst` on **every** POST route, plus `GET /whoami`; `by=` removed from the API;
+  `created_by` / `requested_by` / `decided_by` / `executed_by` recorded from the verified identity;
+  auth failures audited (throttled, token never recorded); 401 returned *before* resource lookup.
+- UI: sign-in card, bearer header on every call, token in `sessionStorage` only, 401 → prompt not alert.
+- Tests: 52 unit + 56 HTTP-level (`TestClient`) + 17 jsdom UI tests. This also delivers part of CR-5
+  (the first `TestClient` coverage) and PL-8 (the committed XSS-escaping regression test).
+
+**Defects found while doing it (all fixed in the same change):**
+1. *Report button was broken* — the UI used `window.open()` (a GET) against a POST-only route, so
+   "Generate VAPT PDF report" would have returned 405 for anyone who clicked it. Now a POST with the
+   bearer header, downloaded as a blob.
+2. *Arbitrary file write via upload filename* — `DATA_DIR/<id>/raw/<file.filename>` used the client's
+   filename verbatim (`../../x`). Now reduced to a safe basename; covered by traversal tests.
+3. *Static app buttons never got the motion bindings* until the first `render()` — the motion script
+   ran before `#app` existed. Now bound at load.
+4. *Expected auth failures logged as uncaught promise rejections* — handlers now end quietly via a
+   `HandledError` wrapper while real exceptions still propagate.
+
+**Still open and honest about it:** guessing is unthrottled until HP-1; the upload is still fully
+buffered with no size cap until CR-2 (an unauthenticated upload is rejected before it touches disk,
+but FastAPI parses multipart bodies before dependencies run, so a *size cap at the ASGI layer* — not
+auth — is the right fix for that); tokens live in process env / a dev file, not a secret manager.

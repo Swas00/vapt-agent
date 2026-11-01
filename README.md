@@ -73,16 +73,43 @@ brew install nmap nikto     # one-time
 
 ```bash
 .venv/bin/uvicorn vapt_agent.api:app --reload
-# then open http://127.0.0.1:8000/ui/
+# then open http://127.0.0.1:8000/ui/ and sign in with an analyst token (next section)
 ```
 
-**Tests** (88 tests: scope enforcement, all 6 parsers, correlation/dedup, risk scoring & CVSS-vector
-parsing, candidate-based planning + bounded LLM arbitration (incl. a prompt-injection test), MITRE/
-CSF tagging, report generation, full orchestrator pipeline end-to-end, approval gating, live nmap/
-nikto subprocess runs, ZAP and Metasploit subprocess/REST wiring):
+### Authentication — who did what
+
+Every state-changing endpoint (create assessment, approve/run a step, import, analyse, request/decide/
+execute an approval, generate the report) requires `Authorization: Bearer <analyst token>`. Each token
+belongs to exactly one named analyst, and **that verified name — never anything the client sends — is what
+the audit log and the approval records store** (PS-1 §13: "every action is attributable"). A `by=` query
+parameter, if a client still sends one, is ignored. Read-only `GET` routes (the audit trail, integration
+matrix, assessment views) stay open so the trail is inspectable.
+
+```bash
+# real identities (tokens >= 16 chars; names [A-Za-z0-9._-]; "agent" and "system" are reserved
+# for automated audit-log actors and can't be assigned to a person):
+export VAPT_ANALYST_TOKENS="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))'):alice,$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))'):bob"
+```
+
+With `VAPT_ANALYST_TOKENS` unset, the server starts in **dev mode**: it generates one token for the identity
+`analyst`, prints it at startup, and persists it (mode `0600`) at `data/.dev_token` so `--reload` doesn't
+invalidate it. Paste the token into the UI's sign-in card (kept in `sessionStorage` — cleared when the tab
+closes). From a script: `curl -H "Authorization: Bearer $TOKEN" -X POST ...`. A malformed
+`VAPT_ANALYST_TOKENS` stops the server at startup rather than silently running open. Failed attempts are
+audited (throttled per client, and the presented token is never recorded).
+
+**Tests** (197: scope enforcement, all 6 parsers, correlation/dedup, risk scoring & CVSS-vector parsing,
+candidate-based planning + bounded LLM arbitration (incl. a prompt-injection test), MITRE/CSF tagging,
+report generation, full orchestrator pipeline, approval gating, live nmap/nikto subprocess runs, ZAP and
+Metasploit wiring, **authentication** — config parsing, constant-time comparison, a meta-test that fails
+if any POST route lacks the guard, and HTTP-level tests through FastAPI's `TestClient` — plus a jsdom suite
+that executes the real web page):
 
 ```bash
 .venv/bin/python -m pytest -q
+
+# optional: enables the jsdom UI suite (otherwise that one test is skipped, not failed)
+cd tests/frontend && npm install && npm test
 ```
 
 ## Dependencies & licensing
@@ -100,6 +127,7 @@ license for live control of either — see `docs/INTEGRATIONS.md`.
 vapt_agent/
   models.py        common data model (Finding, Assessment, ScopeModel, ToolRun, Approval, ...)
   scope.py          scope/target enforcement, called before every scan/finding/validation
+  auth.py           per-analyst bearer tokens -> verified identities (what the audit log records)
   audit.py          append-only, hash-chained audit log
   planner.py        rules-first adaptive planning (+ optional LLM rationale phrasing)
   llm.py            optional Claude enrichment layer (explain-only, never decides)
@@ -110,7 +138,7 @@ vapt_agent/
   adapters/         one module per tool (nmap, nessus, openvas, nikto, zap, burp, metasploit)
   api.py            FastAPI surface
   static/index.html minimal UI exercising the full workflow
-tests/              pytest suite + recorded fixture tool outputs
+tests/              pytest suite + recorded fixture tool outputs; tests/frontend = jsdom UI tests
 demo.py             headless end-to-end demo script
 docs/               architecture overview + integration transparency matrix
 ```

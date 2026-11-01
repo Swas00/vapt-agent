@@ -24,6 +24,7 @@ written to an append-only, hash-chained audit log (`vapt_agent/audit.py`).
 | Orchestration | `vapt_agent/orchestrator.py` | The only place that calls adapters, scope checks, the correlator and the risk engine. Owns plan execution, result ingestion, finding-driven replanning (after `analyse()`), and the human-approval workflow for active validation. |
 | Normalization & correlation | `vapt_agent/correlate.py` | Maps all adapters' output onto the common `Finding` schema, then merges genuine duplicates (same asset+port and matching CVE/CWE/title similarity) while **keeping all evidence and source tools** on the surviving record — nothing is hidden, only folded. Low-confidence single-source generic findings are tagged `false_positive_candidate`, never silently dropped. |
 | Risk prioritization | `vapt_agent/risk.py` | Deterministic, fully transparent formula combining CVSS, exploitability, exposure class, asset criticality and confidence (see `risk_breakdown` on every finding). CVSS is **never fabricated**: a missing score is estimated from the tool's own severity band and explicitly flagged `cvss_estimated`. |
+| Authentication & attribution | `vapt_agent/auth.py`, `api.require_analyst` | Per-analyst bearer tokens → verified identities. Every POST route depends on `require_analyst` (a meta-test fails if one doesn't); that verified name — never a client-supplied `by=` — is written to the audit log and to `Approval.requested_by/decided_by/executed_by` and `Assessment.created_by`, and printed in the PDF. Reserved names (`agent`, `system`) can't be assigned to humans, so a person can't forge an entry that reads as automated. Failed attempts are audited (throttled per client; the token is never recorded). Read-only GETs stay open so the trail is inspectable. |
 | Human-in-the-loop | `vapt_agent/orchestrator.py` (`request_approval`/`decide_approval`/`execute_approval`) | No active validation (Metasploit `check` against an analyst-named module) can run without a recorded approval. Denials, approvals, and outcomes are all written to the audit log and shown in the final report. The agent *suggests* when a finding warrants requesting one (`planner.propose_validation_steps`, surfaced as an `Event` after `analyse()`) but never creates an `Approval` itself. |
 | Reporting | `vapt_agent/report.py` | Generates the client-ready PDF with every required section: executive summary (+ at-a-glance stats table), methodology/RoE/an "assets actually tested" table/tool summary/NIST CSF alignment, severity distribution, detailed findings with evidence (incl. a SHA-256 per evidence item) and MITRE ATT&CK tags, a grounded per-finding business+technical impact statement (`impact_statement()`, built from asset criticality, exposure class, and CVSS-vector C/I/A components — never a generic severity label), limitations/assumptions, and the integration transparency matrix. |
 | LLM prose (optional) | `vapt_agent/llm.py` | If `ANTHROPIC_API_KEY` is set, Claude writes the report's executive-summary prose, strictly grounded in the already-finalized finding counts passed to it. Candidate *ranking* is a separate, much more tightly bounded concern — see `reasoning.py`. Without a key, a deterministic template is used; nothing in the pipeline hard-depends on the LLM. |
@@ -77,6 +78,8 @@ append-only, hash-chained file — tampering with any entry breaks the chain, wh
 
 ## 4. Security boundaries
 
+- **Identity is server-derived.** Mutating endpoints reject missing/invalid/mis-schemed bearer tokens with 401 *before* looking up the resource (an unauthenticated caller can't probe which assessment ids exist). Tokens are compared in constant time against every configured token; configuration is validated at startup (a malformed `VAPT_ANALYST_TOKENS` refuses to start rather than running open); in dev mode the generated token is stored `0600`. Known limits, tracked in the roadmap: no rate limiting on guessing yet (HP-1; tokens are ≥16 chars / 24 random bytes by default), no upload size cap (CR-2), and bearer-in-`sessionStorage` presumes the XSS-safe rendering the UI test suite guards.
+
 - All scope checks happen in one module (`scope.py`) and are invoked from the orchestrator before any
   scan, before any finding is accepted into the assessment, and before any validation executes.
 - Public IP addresses are rejected unless the operator explicitly sets `allow_public=true` on the scope
@@ -97,7 +100,7 @@ append-only, hash-chained file — tampering with any entry breaks the chain, wh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python demo.py                 # headless: fixtures -> report, no live scanning
 .venv/bin/uvicorn vapt_agent.api:app --reload   # then open http://127.0.0.1:8000/ui/
-.venv/bin/python -m pytest -q             # 88 tests: scope, adapters, correlation, risk, planning/
+.venv/bin/python -m pytest -q             # 197 tests (incl. auth, HTTP-level, jsdom UI): scope, adapters, correlation, risk, planning/
                                            # reasoning (incl. a prompt-injection test), frameworks,
                                            # report, e2e, live scans
 ```
