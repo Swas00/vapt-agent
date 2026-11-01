@@ -398,6 +398,17 @@ void main(void){
 </header>
 <main>
   <div class="col" id="left">
+    <div class="card" id="authCard">
+      <label for="tokenInput">Analyst token</label>
+      <div class="row" style="flex-wrap:nowrap">
+        <input id="tokenInput" type="password" autocomplete="off" spellcheck="false"
+               placeholder="paste your analyst token" style="flex:1;min-width:0" />
+        <button id="signInBtn" type="button">Sign in</button>
+        <button id="signOutBtn" type="button" class="ghost" hidden>Sign out</button>
+      </div>
+      <div id="authStatus" class="mono" role="status" aria-live="polite" style="margin-top:6px">Not signed in.</div>
+    </div>
+
     <div class="card">
       <label>Analyst request</label>
       <textarea id="request" placeholder="e.g. Assess the lab web application and its host for common vulnerabilities before our client demo.">Assess the lab target for common network and web vulnerabilities ahead of the demo.</textarea>
@@ -457,15 +468,80 @@ function esc(s) {
                   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// ---- Authentication ------------------------------------------------------------------------
+// The server resolves this bearer token to a verified analyst identity and records THAT identity in
+// the audit log; nothing this page sends can name the actor. Kept in sessionStorage (cleared when
+// the tab closes), never localStorage, and never echoed back into the DOM.
+let analystToken = '';
+try { analystToken = sessionStorage.getItem('vapt_token') || ''; } catch (e) { /* storage blocked */ }
+
+function authHeaders(extra = {}) {
+  return analystToken ? { ...extra, Authorization: 'Bearer ' + analystToken } : extra;
+}
+
+function setAuthStatus(text, signedIn) {
+  $('#authStatus').textContent = text;                 // textContent: identity is server-supplied
+  $('#signInBtn').hidden = !!signedIn;
+  $('#signOutBtn').hidden = !signedIn;
+  $('#tokenInput').hidden = !!signedIn;
+}
+
+function handleUnauthenticated() {
+  analystToken = '';
+  try { sessionStorage.removeItem('vapt_token'); } catch (e) { /* ignore */ }
+  setAuthStatus('Not signed in — paste a valid analyst token to continue.', false);
+  $('#tokenInput').focus();
+}
+
+async function verifyToken(candidate) {
+  const res = await fetch('/whoami', { headers: { Authorization: 'Bearer ' + candidate } });
+  if (!res.ok) return null;
+  return (await res.json()).identity;
+}
+
+async function signIn() {
+  const candidate = $('#tokenInput').value.trim();
+  if (!candidate) { setAuthStatus('Paste your analyst token first.', false); return; }
+  const identity = await verifyToken(candidate);
+  if (!identity) { setAuthStatus('That token was not accepted.', false); return; }
+  analystToken = candidate;
+  try { sessionStorage.setItem('vapt_token', candidate); } catch (e) { /* ignore */ }
+  $('#tokenInput').value = '';
+  setAuthStatus('Signed in as ' + identity, true);
+}
+
+$('#signInBtn').onclick = signIn;
+$('#tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+$('#signOutBtn').onclick = () => { handleUnauthenticated(); setAuthStatus('Signed out.', false); };
+if (analystToken) {
+  verifyToken(analystToken).then((identity) => {
+    if (identity) setAuthStatus('Signed in as ' + identity, true); else handleUnauthenticated();
+  }).catch(() => {});
+}
+
+// api() has already told the user what went wrong by the time it throws -- a 401 re-opens the sign-in
+// prompt, anything else raises an alert -- so it throws HandledError purely to stop the calling
+// flow. entry() wraps every user-triggered handler so that case ends quietly instead of surfacing
+// as an "Uncaught (in promise)" console error (a missed sign-in is an expected path, not a crash);
+// any *other* exception still propagates.
+class HandledError extends Error {}
+function entry(fn) {
+  return async (...args) => {
+    try { return await fn(...args); }
+    catch (e) { if (!(e instanceof HandledError)) throw e; }
+  };
+}
+
 async function api(path, opts={}) {
-  const res = await fetch(path, { headers: {'Content-Type':'application/json'}, ...opts });
-  if (!res.ok) { alert(await res.text()); throw new Error('api error'); }
+  const res = await fetch(path, { ...opts, headers: authHeaders({'Content-Type':'application/json'}) });
+  if (res.status === 401) { handleUnauthenticated(); throw new HandledError('unauthenticated'); }
+  if (!res.ok) { alert(await res.text()); throw new HandledError('request failed'); }
   return res.json();
 }
 
 function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
 
-$('#createBtn').onclick = async () => {
+$('#createBtn').onclick = entry(async () => {
   const body = {
     request: $('#request').value,
     scope: {
@@ -479,46 +555,71 @@ $('#createBtn').onclick = async () => {
   current = await api('/assessments', {method:'POST', body: JSON.stringify(body)});
   currentId = current.id;
   render();
-};
+});
 
 async function refresh(){ current = await api(`/assessments/${currentId}`); render(); }
 
-$('#analyseBtn').onclick = async () => { if(!currentId) return; await api(`/assessments/${currentId}/analyse`, {method:'POST'}); refresh(); };
-$('#reportBtn').onclick = () => { if(!currentId) return; window.open(`/assessments/${currentId}/report`, '_blank'); };
+$('#analyseBtn').onclick = entry(async () => {
+  if(!currentId) return;
+  await api(`/assessments/${currentId}/analyse`, {method:'POST'});
+  await refresh();
+});
+$('#reportBtn').onclick = entry(async () => {
+  if(!currentId) return;
+  // The endpoint is a POST (it writes the PDF and audits the generation), so a bare window.open --
+  // a GET with no way to attach the bearer header -- can't call it. Fetch the PDF and hand the
+  // browser the bytes as a download instead.
+  const res = await fetch(`/assessments/${currentId}/report`, { method:'POST', headers: authHeaders() });
+  if (res.status === 401) { handleUnauthenticated(); return; }
+  if (!res.ok) return alert(await res.text());
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url; link.download = `VAPT-${currentId}.pdf`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+});
 
-$('#importBtn').onclick = async () => {
+$('#importBtn').onclick = entry(async () => {
   if(!currentId) return alert('Start an assessment first');
   const f = $('#importFile').files[0];
   if(!f) return alert('Choose a file');
   const fd = new FormData(); fd.append('file', f);
-  const res = await fetch(`/assessments/${currentId}/import/${$('#importTool').value}`, {method:'POST', body: fd});
+  const res = await fetch(`/assessments/${currentId}/import/${$('#importTool').value}`,
+                          {method:'POST', body: fd, headers: authHeaders()});
+  if (res.status === 401) { handleUnauthenticated(); return; }
   if(!res.ok) return alert(await res.text());
-  refresh();
-};
+  await refresh();
+});
 
-async function runStep(stepId){ await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=true&by=analyst`, {method:'POST'});
-  await api(`/assessments/${currentId}/plan/${stepId}/run`, {method:'POST'}); refresh(); }
-async function rejectStep(stepId){ await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false&by=analyst`, {method:'POST'}); refresh(); }
+const runStep = entry(async (stepId) => {
+  await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=true`, {method:'POST'});
+  await api(`/assessments/${currentId}/plan/${stepId}/run`, {method:'POST'});
+  await refresh();
+});
+const rejectStep = entry(async (stepId) => {
+  await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false`, {method:'POST'});
+  await refresh();
+});
 
-async function requestApproval(findingId){
+const requestApproval = entry(async (findingId) => {
   // Built here, from the current in-memory finding, rather than threaded through an inline
   // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
   // this app controls), so they must never be hand-spliced into an HTML attribute string.
   const f = (current.findings || []).find(x => x.id === findingId);
   const action = f ? `Human-approved check-mode validation of ${f.title} on ${f.asset}` : 'Validate finding';
   await api(`/assessments/${currentId}/approvals`, {method:'POST', body: JSON.stringify({finding_id: findingId, action})});
-  refresh();
-}
-async function decideApproval(id, approved){
+  await refresh();
+});
+const decideApproval = entry(async (id, approved) => {
   const reason = approved ? 'Analyst approved controlled validation.' : prompt('Reason for denial?') || 'denied';
-  await api(`/assessments/${currentId}/approvals/${id}/decision?approved=${approved}&by=analyst&reason=${encodeURIComponent(reason)}`, {method:'POST'});
+  await api(`/assessments/${currentId}/approvals/${id}/decision?approved=${approved}&reason=${encodeURIComponent(reason)}`, {method:'POST'});
   if (approved) await api(`/assessments/${currentId}/approvals/${id}/execute`, {method:'POST'});
-  refresh();
-}
+  await refresh();
+});
 
 function render(){
   if(!current) return;
-  $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b><br><span class="mono">state: ${esc(current.state)}</span></div>`;
+  $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b><br><span class="mono">state: ${esc(current.state)}${current.created_by ? ' · opened by ' + esc(current.created_by) : ''}</span></div>`;
 
   function statusClass(s){
     if (s==='skipped') return 'sev-medium';
@@ -570,7 +671,8 @@ function render(){
   $('#approvals').innerHTML = (current.approvals||[]).map(a => `
     <div class="card">
       <div>${esc(a.action)}</div>
-      <div class="mono">state=${esc(a.state)} outcome=${esc(a.outcome||'-')}</div>
+      <div class="mono">state=${esc(a.state)} outcome=${esc(a.outcome||'-')}
+        requested_by=${esc(a.requested_by||'-')} decided_by=${esc(a.decided_by||'-')} executed_by=${esc(a.executed_by||'-')}</div>
       ${a.state==='pending' ? `<div class="row" style="margin-top:6px">
         <button onclick="decideApproval('${esc(a.id)}', true)">Approve &amp; execute</button>
         <button class="ghost" onclick="decideApproval('${esc(a.id)}', false)">Deny</button></div>` : ''}
