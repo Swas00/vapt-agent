@@ -212,7 +212,8 @@ def generate(a: Assessment, out_path: Path) -> Path:
     story = []
 
     story.append(Paragraph("Vulnerability Assessment &amp; Penetration Test Report", ss["H1"]))
-    story.append(Paragraph(f"Assessment ID: {a.id} &nbsp;|&nbsp; Generated: {a.created}", ss["Small"]))
+    prepared = f" &nbsp;|&nbsp; Opened by: {_esc(a.created_by)}" if a.created_by else ""
+    story.append(Paragraph(f"Assessment ID: {a.id} &nbsp;|&nbsp; Generated: {a.created}{prepared}", ss["Small"]))
     story.append(Spacer(1, 10))
 
     story.append(Paragraph("1. Executive Summary", ss["H2"]))
@@ -310,8 +311,10 @@ def generate(a: Assessment, out_path: Path) -> Path:
     story.append(Paragraph("Human approvals and outcomes:", ss["Body"]))
     if a.approvals:
         for ap in a.approvals:
-            story.append(Paragraph(f"• [{_esc(ap.state)}] {_esc(ap.action)} — decided by "
+            story.append(Paragraph(f"• [{_esc(ap.state)}] {_esc(ap.action)} — requested by "
+                                   f"{_esc(ap.requested_by) or 'n/a'}; decided by "
                                    f"{_esc(ap.decided_by) or 'n/a'} at {_esc(ap.decided_at) or 'n/a'}; "
+                                   f"executed by {_esc(ap.executed_by) or 'n/a'}; "
                                    f"outcome: {_esc(ap.outcome) or 'n/a'}", ss["Small"]))
     else:
         story.append(Paragraph("• No active validation was requested or approved in this assessment.", ss["Small"]))
