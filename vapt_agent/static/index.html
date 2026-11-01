@@ -683,6 +683,10 @@ function render(){
   // anything already bound, so this is cheap and safe to call every render).
   if (window.bindButtonMotion) window.bindButtonMotion(document);
 }
+
+// The motion script above runs before #app exists in the DOM, so the app's static buttons (sign in,
+// Start assessment, Import, ...) weren't bound by its initial pass -- bind them now that they do.
+if (window.bindButtonMotion) window.bindButtonMotion(document);
 </script>
 </body>
 </html>
