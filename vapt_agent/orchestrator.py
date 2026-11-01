@@ -25,13 +25,16 @@ class Orchestrator:
         self.adapters = registry()
 
     # ---- lifecycle -----------------------------------------------------
-    def create(self, request: str, scope: ScopeModel) -> Assessment:
+    def create(self, request: str, scope: ScopeModel, actor: str = "analyst") -> Assessment:
+        """`actor` is the verified analyst identity. The API layer always supplies it from the
+        authenticated token (auth.py); the default only exists for in-process use (demo scripts)."""
         problems = validate_scope(scope)
         if problems:
             raise ScopeError("; ".join(problems))
-        a = Assessment(request=request, scope=scope)
-        a.events.append(Event(level="decision", message=f"Assessment created for {len(scope.targets)} target(s)."))
-        self.audit.append("analyst", "assessment.create", assessment=a.id, targets=scope.targets)
+        a = Assessment(request=request, scope=scope, created_by=actor)
+        a.events.append(Event(level="decision", message=f"Assessment created by {actor} for "
+                                                         f"{len(scope.targets)} target(s)."))
+        self.audit.append(actor, "assessment.create", assessment=a.id, targets=scope.targets)
         a.plan = planner.build_initial_plan(a)
         a.state = "planned"
         for step in a.plan:
@@ -56,7 +59,7 @@ class Orchestrator:
         self.audit.append(by, f"plan.step_{step.status}", assessment=a.id, step=step.id)
         return step
 
-    def run_step(self, a: Assessment, step_id: str) -> ToolRun:
+    def run_step(self, a: Assessment, step_id: str, actor: str = "analyst") -> ToolRun:
         step = next(s for s in a.plan if s.id == step_id)
         if step.status not in ("approved",):
             raise ScopeError(f"step {step_id} is '{step.status}', not approved")
@@ -67,8 +70,10 @@ class Orchestrator:
         run = adapter.run(step.target, step.preset, self._workdir(a))
         a.runs.append(run)
         step.run_id, step.status = run.id, ("done" if run.status == "ok" else "failed")
+        # The *execution* is the agent's act, but a human triggered it -- keep both on the record.
         self.audit.append("agent", "tool.run", assessment=a.id, run=run.id, tool=run.tool,
-                          target=run.target, status=run.status, raw_sha256=run.raw_sha256, error=run.error)
+                          target=run.target, status=run.status, raw_sha256=run.raw_sha256, error=run.error,
+                          triggered_by=actor)
         if run.status == "ok" and run.raw_path:
             self._ingest(a, adapter, Path(run.raw_path), run)
         elif run.status != "ok":
@@ -76,7 +81,8 @@ class Orchestrator:
             a.events.append(Event(level="error", message=f"{run.tool} failed on {run.target}: {run.error}"))
         return run
 
-    def import_result(self, a: Assessment, tool: str, raw_path: Path, target: str = "") -> ToolRun:
+    def import_result(self, a: Assessment, tool: str, raw_path: Path, target: str = "",
+                      actor: str = "analyst") -> ToolRun:
         """Ingest a recorded/exported output file (Nessus/.nessus, OpenVAS XML, ZAP/Nikto JSON, Burp XML)."""
         adapter = self.adapters.get(tool)
         if adapter is None:
@@ -86,7 +92,7 @@ class Orchestrator:
         from .adapters.base import sha256_file
         run.raw_sha256 = sha256_file(raw_path)
         a.runs.append(run)
-        self.audit.append("analyst", "tool.import", assessment=a.id, run=run.id, tool=tool,
+        self.audit.append(actor, "tool.import", assessment=a.id, run=run.id, tool=tool,
                           raw_sha256=run.raw_sha256, source=str(raw_path))
         self._ingest(a, adapter, Path(raw_path), run)
         return run
@@ -172,12 +178,14 @@ class Orchestrator:
         return a
 
     # ---- human-in-the-loop approval for active validation ---------------
-    def request_approval(self, a: Assessment, finding_id: str, action: str, module: str = "") -> Approval:
+    def request_approval(self, a: Assessment, finding_id: str, action: str, module: str = "",
+                         requested_by: str = "analyst") -> Approval:
         f = next(x for x in a.findings if x.id == finding_id)
-        appr = Approval(finding_id=finding_id, asset=f.asset, action=action, module=module)
+        appr = Approval(finding_id=finding_id, asset=f.asset, action=action, module=module,
+                        requested_by=requested_by)
         a.approvals.append(appr)
         f.validation_status = "approval_pending"
-        self.audit.append("agent", "approval.requested", assessment=a.id, approval=appr.id,
+        self.audit.append(requested_by, "approval.requested", assessment=a.id, approval=appr.id,
                           finding=finding_id, requested_action=action)
         return appr
 
@@ -193,15 +201,19 @@ class Orchestrator:
             f.validation_status = "denied"
         return appr
 
-    def execute_approval(self, a: Assessment, approval_id: str) -> ToolRun:
+    def execute_approval(self, a: Assessment, approval_id: str, executed_by: str = "") -> ToolRun:
         appr = next(x for x in a.approvals if x.id == approval_id)
         if appr.state != "approved":
             raise ScopeError(f"approval {approval_id} is '{appr.state}', cannot execute")
+        # Whoever triggers execution is recorded -- they may differ from whoever approved it.
+        executor = executed_by or appr.decided_by or "analyst"
+        appr.executed_by = executor
         f = next(x for x in a.findings if x.id == appr.finding_id)
         d = scope_check(a.scope, f.asset, tool="metasploit")
         if not d.allowed:
             appr.state, appr.outcome = "failed", f"scope rejected: {d.reason}"
-            self.audit.append("agent", "approval.scope_rejected", assessment=a.id, approval=appr.id, reason=d.reason)
+            self.audit.append("agent", "approval.scope_rejected", assessment=a.id, approval=appr.id,
+                              reason=d.reason, triggered_by=executor)
             return ToolRun(tool="metasploit", mode="live", target=f.asset, status="failed", error=d.reason)
         ms: Metasploit = self.adapters["metasploit"]  # type: ignore[assignment]
         run = ms.validate(appr, d.host, f.port, self._workdir(a))
@@ -217,6 +229,6 @@ class Orchestrator:
             elif outcome == "not_reproducible":
                 f.inference.append("[inference] Approved check-mode validation could not reproduce the issue.")
             risk.score(f, a.scope)
-        self.audit.append(appr.decided_by or "analyst", "approval.executed", assessment=a.id,
+        self.audit.append(executor, "approval.executed", assessment=a.id,
                           approval=appr.id, run=run.id, status=run.status, outcome=appr.outcome)
         return run

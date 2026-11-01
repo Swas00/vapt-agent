@@ -130,8 +130,10 @@ class Approval(BaseModel):
     tool: str = "metasploit"
     module: str = ""                  # supplied by the analyst, never invented by the agent
     requested_at: str = Field(default_factory=now)
+    requested_by: str = ""            # verified analyst identity (auth.py), never client-supplied
     state: Literal["pending", "approved", "denied", "executed", "failed"] = "pending"
     decided_by: str = ""
+    executed_by: str = ""
     decided_at: str = ""
     reason: str = ""
     outcome: str = ""
@@ -147,6 +149,7 @@ class Event(BaseModel):
 class Assessment(BaseModel):
     id: str = Field(default_factory=lambda: uid("asm-"))
     created: str = Field(default_factory=now)
+    created_by: str = ""              # verified analyst identity that opened this assessment
     request: str
     scope: "ScopeModel"
     state: Literal["created", "planned", "scanning", "analysed", "reviewed", "reported", "rejected"] = "created"
