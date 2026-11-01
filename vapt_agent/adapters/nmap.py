@@ -48,7 +48,6 @@ class Nmap(Adapter):
             addr = next((a.get("addr") for a in h.findall("address") if a.get("addrtype") in ("ipv4", "ipv6")), None)
             if not addr:
                 continue
-            hn = h.find("hostnames/hostname")
             host_label = addr
             for p in h.findall("ports/port"):
                 state = p.find("state")

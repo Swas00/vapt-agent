@@ -83,7 +83,7 @@ def test_approved_validation_can_be_not_reproducible(fake_msf_on_path, orch, ass
 
 
 def test_execution_refused_without_approval(fake_msf_on_path, orch, assessment):
-    f = _seed_finding(assessment)
+    _seed_finding(assessment)
     orch.analyse(assessment)
     target = assessment.findings[0]
     appr = orch.request_approval(assessment, target.id, "Validate", module="auxiliary/vuln_module")
@@ -92,7 +92,7 @@ def test_execution_refused_without_approval(fake_msf_on_path, orch, assessment):
 
 
 def test_execution_refused_for_malformed_module_name(fake_msf_on_path, orch, assessment):
-    f = _seed_finding(assessment)
+    _seed_finding(assessment)
     orch.analyse(assessment)
     target = assessment.findings[0]
     appr = orch.request_approval(assessment, target.id, "Validate", module="rm -rf /; echo pwned")

@@ -2,8 +2,6 @@
 at-a-glance stats table, the assets-tested table, and a full generate() smoke test."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from vapt_agent.models import Approval, Assessment, Finding, ScopeModel, Service, ToolRun
 from vapt_agent.report import _assets_tested_rows, _stats_rows, generate, impact_statement
 from vapt_agent.risk import score

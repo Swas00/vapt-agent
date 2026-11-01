@@ -5,7 +5,6 @@ human approval for active validation -> report. State lives in-memory per Assess
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse

@@ -25,7 +25,7 @@ import json
 import os
 from typing import Optional
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
