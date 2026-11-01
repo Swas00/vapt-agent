@@ -47,7 +47,6 @@
                         border:1px solid rgba(253,186,116,.32); transition:border-color .25s ease; pointer-events:none; }
   button.ghost:hover:not(:disabled)::after { border-color:rgba(253,186,116,.6); }
   button.ghost:hover:not(:disabled) { background:rgba(249,115,22,.16); box-shadow:none; }
-  button.danger { background:var(--crit); background-size:auto; color:#200; }
   button:disabled { opacity:.4; cursor:not-allowed; }
   .btn-ripple { position:absolute; width:6px; height:6px; border-radius:50%; left:0; top:0;
                 background:rgba(255,255,255,.55); transform:translate(-50%,-50%) scale(0); pointer-events:none;
@@ -448,6 +447,16 @@ void main(void){
 const $ = s => document.querySelector(s);
 let currentId = null, current = null;
 
+// Finding titles, tool output, and event messages all ultimately trace back to scan results --
+// i.e. to the target system being assessed, not to this app's own operator. Nothing from there
+// is trusted: every dynamic value below goes through esc() before it's inserted as innerHTML, so
+// a crafted finding title or scanner message can't inject markup/script into the analyst's view.
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 async function api(path, opts={}) {
   const res = await fetch(path, { headers: {'Content-Type':'application/json'}, ...opts });
   if (!res.ok) { alert(await res.text()); throw new Error('api error'); }
@@ -491,7 +500,12 @@ async function runStep(stepId){ await api(`/assessments/${currentId}/plan/${step
   await api(`/assessments/${currentId}/plan/${stepId}/run`, {method:'POST'}); refresh(); }
 async function rejectStep(stepId){ await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false&by=analyst`, {method:'POST'}); refresh(); }
 
-async function requestApproval(findingId, action){
+async function requestApproval(findingId){
+  // Built here, from the current in-memory finding, rather than threaded through an inline
+  // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
+  // this app controls), so they must never be hand-spliced into an HTML attribute string.
+  const f = (current.findings || []).find(x => x.id === findingId);
+  const action = f ? `Human-approved check-mode validation of ${f.title} on ${f.asset}` : 'Validate finding';
   await api(`/assessments/${currentId}/approvals`, {method:'POST', body: JSON.stringify({finding_id: findingId, action})});
   refresh();
 }
@@ -504,7 +518,7 @@ async function decideApproval(id, approved){
 
 function render(){
   if(!current) return;
-  $('#assessmentMeta').innerHTML = `<div class="card"><b>${current.id}</b><br><span class="mono">state: ${current.state}</span></div>`;
+  $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b><br><span class="mono">state: ${esc(current.state)}</span></div>`;
 
   function statusClass(s){
     if (s==='skipped') return 'sev-medium';
@@ -514,25 +528,25 @@ function render(){
   }
   $('#plan').innerHTML = (current.plan||[]).map(s => `
     <div class="card">
-      <div class="row"><b>${s.tool}</b> → <span class="mono">${s.target}</span> <span class="pill sev-info">${s.preset}</span>
-        <span class="pill sev-info" style="opacity:.7">${s.kind}</span>
+      <div class="row"><b>${esc(s.tool)}</b> → <span class="mono">${esc(s.target)}</span> <span class="pill sev-info">${esc(s.preset)}</span>
+        <span class="pill sev-info" style="opacity:.7">${esc(s.kind)}</span>
         ${s.origin==='llm' ? '<span class="pill" style="background:#d97706;color:#fff7ed">llm-arbitrated</span>' : ''}
-        <span class="pill ${statusClass(s.status)}">${s.status}</span></div>
-      <div class="step-rationale">${s.rationale}</div>
-      ${s.trigger_finding_id ? `<div class="mono" style="margin-top:4px">triggered by finding ${s.trigger_finding_id}</div>` : ''}
-      ${s.status==='skipped' && s.skip_reason ? `<div class="step-rationale" style="color:var(--med)">Deferred: ${s.skip_reason}</div>` : ''}
+        <span class="pill ${statusClass(s.status)}">${esc(s.status)}</span></div>
+      <div class="step-rationale">${esc(s.rationale)}</div>
+      ${s.trigger_finding_id ? `<div class="mono" style="margin-top:4px">triggered by finding ${esc(s.trigger_finding_id)}</div>` : ''}
+      ${s.status==='skipped' && s.skip_reason ? `<div class="step-rationale" style="color:var(--med)">Deferred: ${esc(s.skip_reason)}</div>` : ''}
       ${(s.alternatives_considered||[]).length ? `<details style="margin-top:4px">
         <summary class="mono" style="cursor:pointer">${s.alternatives_considered.length} alternative(s) considered in this batch</summary>
         ${s.alternatives_considered.map(alt => `<div class="mono" style="padding:2px 0 2px 10px">
-          ${alt.tool} → ${alt.target} (${alt.preset})${alt.keep===false ? ' — not run: ' : ' — '}${alt.reason||alt.note||''}</div>`).join('')}
+          ${esc(alt.tool)} → ${esc(alt.target)} (${esc(alt.preset)})${alt.keep===false ? ' — not run: ' : ' — '}${esc(alt.reason||alt.note||'')}</div>`).join('')}
       </details>` : ''}
       ${s.status==='proposed' ? `<div class="row" style="margin-top:6px">
-        <button onclick="runStep('${s.id}')">Approve &amp; run</button>
-        <button class="ghost" onclick="rejectStep('${s.id}')">Reject</button></div>` : ''}
+        <button onclick="runStep('${esc(s.id)}')">Approve &amp; run</button>
+        <button class="ghost" onclick="rejectStep('${esc(s.id)}')">Reject</button></div>` : ''}
     </div>`).join('') || '<div class="mono">No steps yet.</div>';
 
   $('#events').innerHTML = (current.events||[]).slice().reverse().map(e =>
-    `<div class="evt ${e.level}">[${e.ts.split('T')[1].slice(0,8)}] ${e.message}</div>`).join('') || '<div class="mono">No events yet.</div>';
+    `<div class="evt ${esc(e.level)}">[${esc(e.ts.split('T')[1].slice(0,8))}] ${esc(e.message)}</div>`).join('') || '<div class="mono">No events yet.</div>';
 
   $('#findings').innerHTML = (current.findings||[]).map(f => {
     const refs = [...(f.cve||[]), ...(f.cwe||[]), ...(f.owasp||[])];
@@ -542,24 +556,24 @@ function render(){
       ? `<span class="pill sev-info" style="opacity:.7" title="Merged from ${f.merged_from.length} duplicate report(s)">⇄ ${f.source_tools.length} tools merged</span>` : '';
     return `
     <div class="card">
-      <div class="row"><span class="pill sev-${f.severity}">${f.priority||''} ${f.severity}</span>
-        <span class="finding-title">${f.title}</span> ${fpBadge} ${dupBadge}</div>
-      <div class="mono">asset=${f.asset}${f.port? ':'+f.port:''} status=${f.status} validation=${f.validation_status}
-       confidence=${f.confidence} risk=${f.risk_score} tools=${(f.source_tools||[]).join(',')}</div>
-      ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${refs.join(', ')}</div>` : ''}
-      ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#e8b465">ATT&amp;CK (indicative): ${f.mitre_attack.join('; ')}</div>` : ''}
+      <div class="row"><span class="pill sev-${esc(f.severity)}">${esc(f.priority||'')} ${esc(f.severity)}</span>
+        <span class="finding-title">${esc(f.title)}</span> ${fpBadge} ${dupBadge}</div>
+      <div class="mono">asset=${esc(f.asset)}${f.port? ':'+esc(f.port):''} status=${esc(f.status)} validation=${esc(f.validation_status)}
+       confidence=${esc(f.confidence)} risk=${esc(f.risk_score)} tools=${esc((f.source_tools||[]).join(','))}</div>
+      ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${esc(refs.join(', '))}</div>` : ''}
+      ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#e8b465">ATT&amp;CK (indicative): ${esc(f.mitre_attack.join('; '))}</div>` : ''}
       ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' ?
-        `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${f.id}','Human-approved check-mode validation of ${f.title} on ${f.asset}')">Request active-validation approval</button>` : ''}
+        `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}')">Request active-validation approval</button>` : ''}
     </div>`;
   }).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
 
   $('#approvals').innerHTML = (current.approvals||[]).map(a => `
     <div class="card">
-      <div>${a.action}</div>
-      <div class="mono">state=${a.state} outcome=${a.outcome||'-'}</div>
+      <div>${esc(a.action)}</div>
+      <div class="mono">state=${esc(a.state)} outcome=${esc(a.outcome||'-')}</div>
       ${a.state==='pending' ? `<div class="row" style="margin-top:6px">
-        <button onclick="decideApproval('${a.id}', true)">Approve &amp; execute</button>
-        <button class="ghost" onclick="decideApproval('${a.id}', false)">Deny</button></div>` : ''}
+        <button onclick="decideApproval('${esc(a.id)}', true)">Approve &amp; execute</button>
+        <button class="ghost" onclick="decideApproval('${esc(a.id)}', false)">Deny</button></div>` : ''}
     </div>`).join('') || '<div class="mono">No approval requests yet.</div>';
 
   // Every call above replaced #plan/#findings/#approvals wholesale, so their buttons are brand
