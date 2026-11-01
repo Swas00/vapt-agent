@@ -396,19 +396,54 @@ void main(void){
   <h1>🛡️ VAPT Agent</h1>
   <span>Scope-bound, evidence-driven, human-in-the-loop assessment assistant — lab-only</span>
 </header>
-<main>
-  <div class="col" id="left">
-    <div class="card" id="authCard">
-      <label for="tokenInput">Analyst token</label>
-      <div class="row" style="flex-wrap:nowrap">
-        <input id="tokenInput" type="password" autocomplete="off" spellcheck="false"
-               placeholder="paste your analyst token" style="flex:1;min-width:0" />
-        <button id="signInBtn" type="button">Sign in</button>
-        <button id="signOutBtn" type="button" class="ghost" hidden>Sign out</button>
-      </div>
-      <div id="authStatus" class="mono" role="status" aria-live="polite" style="margin-top:6px">Not signed in.</div>
-    </div>
+<section id="authSection" style="padding:16px;max-width:480px">
+  <div class="card" id="authCard">
+    <label for="loginUsername">Username</label>
+    <input id="loginUsername" type="text" autocomplete="username" />
+    <label for="loginPassword">Password</label>
+    <input id="loginPassword" type="password" autocomplete="current-password" />
+    <button id="signInBtn" type="button" style="margin-top:10px">Sign in</button>
+    <div id="authStatus" class="mono" role="status" aria-live="polite" style="margin-top:6px">Not signed in.</div>
+  </div>
 
+  <div class="card" id="pwChangeCard" hidden>
+    <label><b id="pwChangeReason">Choose a new password</b></label>
+    <label for="pwCurrent">Current password</label>
+    <input id="pwCurrent" type="password" autocomplete="current-password" />
+    <label for="pwNew">New password (12+ characters, not a common one)</label>
+    <input id="pwNew" type="password" autocomplete="new-password" />
+    <label for="pwNewConfirm">Confirm new password</label>
+    <input id="pwNewConfirm" type="password" autocomplete="new-password" />
+    <button id="pwChangeBtn" type="button" style="margin-top:10px">Change password</button>
+    <div id="pwChangeStatus" class="mono" role="status" aria-live="polite" style="margin-top:6px"></div>
+  </div>
+
+  <div id="signedInBar" class="card" hidden>
+    <div class="row">
+      <span class="mono" id="whoami"></span>
+      <button id="signOutBtn" type="button" class="ghost">Sign out</button>
+      <button id="signOutAllBtn" type="button" class="ghost">Sign out everywhere</button>
+    </div>
+  </div>
+
+  <div id="adminCard" class="card" hidden>
+    <h2 style="margin-top:0">Admin: accounts</h2>
+    <label for="newUserName">New user</label>
+    <input id="newUserName" placeholder="username" />
+    <input id="newUserPassword" type="password" placeholder="temporary password (12+ chars)" style="margin-top:8px" />
+    <select id="newUserRole" style="width:100%;margin-top:8px;background:#0d0906;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
+      <option value="viewer">viewer</option>
+      <option value="analyst" selected>analyst</option>
+      <option value="lead">lead</option>
+      <option value="admin">admin</option>
+    </select>
+    <button id="createUserBtn" type="button" style="margin-top:8px">Create user</button>
+    <div id="adminStatus" class="mono" style="margin-top:6px"></div>
+    <div id="userList" style="margin-top:10px"></div>
+  </div>
+</section>
+<main id="mainApp" hidden>
+  <div class="col" id="left">
     <div class="card">
       <label>Analyst request</label>
       <textarea id="request" placeholder="e.g. Assess the lab web application and its host for common vulnerabilities before our client demo.">Assess the lab target for common network and web vulnerabilities ahead of the demo.</textarea>
@@ -468,62 +503,24 @@ function esc(s) {
                   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// ---- Authentication ------------------------------------------------------------------------
-// The server resolves this bearer token to a verified analyst identity and records THAT identity in
-// the audit log; nothing this page sends can name the actor. Kept in sessionStorage (cleared when
-// the tab closes), never localStorage, and never echoed back into the DOM.
-let analystToken = '';
-try { analystToken = sessionStorage.getItem('vapt_token') || ''; } catch (e) { /* storage blocked */ }
+// ---- Authentication ---------------------------------------------------------------------------
+// Real accounts: the server sets an HttpOnly session cookie on login (this page never sees, stores,
+// or sends the session id itself -- the browser attaches the cookie automatically) and hands back a
+// CSRF token in the response body, which this page MUST echo on every mutating request as
+// X-CSRF-Token. That pairing is what stops a hostile page on another origin from riding the
+// analyst's cookie: it can make the browser attach the cookie, but it cannot read csrfToken (kept
+// only in this page's memory, never in any storage) to put in a header.
+let csrfToken = '', currentUsername = '', currentRole = '';
 
 function authHeaders(extra = {}) {
-  return analystToken ? { ...extra, Authorization: 'Bearer ' + analystToken } : extra;
-}
-
-function setAuthStatus(text, signedIn) {
-  $('#authStatus').textContent = text;                 // textContent: identity is server-supplied
-  $('#signInBtn').hidden = !!signedIn;
-  $('#signOutBtn').hidden = !signedIn;
-  $('#tokenInput').hidden = !!signedIn;
-}
-
-function handleUnauthenticated() {
-  analystToken = '';
-  try { sessionStorage.removeItem('vapt_token'); } catch (e) { /* ignore */ }
-  setAuthStatus('Not signed in — paste a valid analyst token to continue.', false);
-  $('#tokenInput').focus();
-}
-
-async function verifyToken(candidate) {
-  const res = await fetch('/whoami', { headers: { Authorization: 'Bearer ' + candidate } });
-  if (!res.ok) return null;
-  return (await res.json()).identity;
-}
-
-async function signIn() {
-  const candidate = $('#tokenInput').value.trim();
-  if (!candidate) { setAuthStatus('Paste your analyst token first.', false); return; }
-  const identity = await verifyToken(candidate);
-  if (!identity) { setAuthStatus('That token was not accepted.', false); return; }
-  analystToken = candidate;
-  try { sessionStorage.setItem('vapt_token', candidate); } catch (e) { /* ignore */ }
-  $('#tokenInput').value = '';
-  setAuthStatus('Signed in as ' + identity, true);
-}
-
-$('#signInBtn').onclick = signIn;
-$('#tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
-$('#signOutBtn').onclick = () => { handleUnauthenticated(); setAuthStatus('Signed out.', false); };
-if (analystToken) {
-  verifyToken(analystToken).then((identity) => {
-    if (identity) setAuthStatus('Signed in as ' + identity, true); else handleUnauthenticated();
-  }).catch(() => {});
+  return csrfToken ? { ...extra, 'X-CSRF-Token': csrfToken } : extra;
 }
 
 // api() has already told the user what went wrong by the time it throws -- a 401 re-opens the sign-in
-// prompt, anything else raises an alert -- so it throws HandledError purely to stop the calling
-// flow. entry() wraps every user-triggered handler so that case ends quietly instead of surfacing
-// as an "Uncaught (in promise)" console error (a missed sign-in is an expected path, not a crash);
-// any *other* exception still propagates.
+// form, anything else raises an alert -- so it throws HandledError purely to stop the calling flow.
+// entry() wraps every user-triggered handler so that case ends quietly instead of surfacing as an
+// "Uncaught (in promise)" console error (a missed sign-in is an expected path, not a crash); any
+// *other* exception still propagates.
 class HandledError extends Error {}
 function entry(fn) {
   return async (...args) => {
@@ -532,12 +529,137 @@ function entry(fn) {
   };
 }
 
+function applyAuthState(body) {
+  // body: {username, role, must_change_password, csrf_token}. Every value rendered below is
+  // server-supplied (username is validated server-side to [A-Za-z0-9._-]; role is one of four
+  // fixed strings) but goes through esc() anyway -- consistent with treating all dynamic text the
+  // same way, not because a looser rule would be unsafe here.
+  csrfToken = body.csrf_token || csrfToken;
+  currentUsername = body.username; currentRole = body.role;
+  $('#authCard').hidden = true;
+  if (body.must_change_password) {
+    $('#pwChangeCard').hidden = false;
+    $('#signedInBar').hidden = true; $('#adminCard').hidden = true; $('#mainApp').hidden = true;
+    $('#pwChangeReason').textContent = 'Signed in as ' + body.username + ' -- a password change is required before continuing.';
+    return;
+  }
+  $('#pwChangeCard').hidden = true;
+  $('#signedInBar').hidden = false;
+  $('#whoami').textContent = `Signed in as ${body.username} (${body.role})`;
+  $('#adminCard').hidden = body.role !== 'admin';
+  if (body.role === 'admin') loadUserList();
+  $('#mainApp').hidden = false;
+}
+
+function setSignedOut(message) {
+  csrfToken = ''; currentUsername = ''; currentRole = '';
+  $('#authCard').hidden = false; $('#pwChangeCard').hidden = true;
+  $('#signedInBar').hidden = true; $('#adminCard').hidden = true; $('#mainApp').hidden = true;
+  $('#authStatus').textContent = message || 'Not signed in.';
+  currentId = null; current = null;
+  $('#loginPassword').value = '';
+}
+
+async function signIn() {
+  const username = $('#loginUsername').value.trim(), password = $('#loginPassword').value;
+  if (!username || !password) { $('#authStatus').textContent = 'Enter a username and password.'; return; }
+  const res = await fetch('/login', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  if (res.status === 429) { $('#authStatus').textContent = 'Too many attempts -- try again shortly.'; return; }
+  if (res.status === 423) { $('#authStatus').textContent = (await res.json()).detail; return; }
+  if (!res.ok) { $('#authStatus').textContent = 'Incorrect username or password.'; return; }
+  $('#loginPassword').value = '';          // don't leave the password sitting in the DOM/memory
+  applyAuthState(await res.json());
+}
+
+$('#signInBtn').onclick = entry(signIn);
+$('#loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+
+$('#signOutBtn').onclick = entry(async () => {
+  await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
+  setSignedOut('Signed out.');
+});
+$('#signOutAllBtn').onclick = entry(async () => {
+  await fetch('/logout-all', { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
+  $('#whoami').textContent += ' (other sessions signed out)';
+});
+
+$('#pwChangeBtn').onclick = entry(async () => {
+  const current_password = $('#pwCurrent').value, new_password = $('#pwNew').value;
+  if (new_password !== $('#pwNewConfirm').value) {
+    $('#pwChangeStatus').textContent = 'New password and confirmation do not match.'; return;
+  }
+  const res = await fetch('/change-password', { method: 'POST', credentials: 'same-origin',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ current_password, new_password }) });
+  if (!res.ok) { $('#pwChangeStatus').textContent = (await res.json()).detail || 'Could not change password.'; return; }
+  $('#pwCurrent').value = ''; $('#pwNew').value = ''; $('#pwNewConfirm').value = '';
+  const who = await fetch('/whoami', { credentials: 'same-origin', headers: authHeaders() });
+  applyAuthState(await who.json());
+});
+
 async function api(path, opts={}) {
-  const res = await fetch(path, { ...opts, headers: authHeaders({'Content-Type':'application/json'}) });
-  if (res.status === 401) { handleUnauthenticated(); throw new HandledError('unauthenticated'); }
+  const res = await fetch(path, { ...opts, credentials: 'same-origin',
+    headers: authHeaders({'Content-Type':'application/json', ...(opts.headers||{})}) });
+  if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); throw new HandledError('unauthenticated'); }
+  if (res.status === 403 && res.headers.get('x-password-change-required') === 'true') {
+    const who = await fetch('/whoami', { credentials: 'same-origin', headers: authHeaders() });
+    if (who.ok) applyAuthState(await who.json());
+    throw new HandledError('password change required');
+  }
   if (!res.ok) { alert(await res.text()); throw new HandledError('request failed'); }
   return res.json();
 }
+
+// Recover session state from the cookie alone on load (no CSRF token needed for /whoami -- it's
+// the one endpoint that hands this page a fresh one to use everywhere else).
+(async () => {
+  try {
+    const res = await fetch('/whoami', { credentials: 'same-origin' });
+    if (res.ok) applyAuthState(await res.json()); else setSignedOut();
+  } catch (e) { setSignedOut(); }
+})();
+
+// ---- Admin: account management ------------------------------------------------------------------
+async function loadUserList() {
+  const res = await fetch('/admin/users', { credentials: 'same-origin', headers: authHeaders() });
+  if (!res.ok) return;
+  const users = await res.json();
+  $('#userList').innerHTML = users.map((u) => `
+    <div class="row" style="justify-content:space-between;border-bottom:1px dashed var(--line);padding:4px 0">
+      <span class="mono">${esc(u.username)} · ${esc(u.role)}${u.disabled ? ' · disabled' : ''}${u.must_change_password ? ' · pending-reset' : ''}</span>
+      <span class="row">
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','unlock')">Unlock</button>
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','reset-password')">Reset pw</button>
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','${u.disabled ? 'enable' : 'disable'}')">${u.disabled ? 'Enable' : 'Disable'}</button>
+      </span>
+    </div>`).join('') || '<div class="mono">No other users yet.</div>';
+}
+
+const adminAction = entry(async (username, action) => {
+  const path = action === 'enable' ? `/admin/users/${username}/disable?disabled=false`
+             : action === 'disable' ? `/admin/users/${username}/disable?disabled=true`
+             : `/admin/users/${username}/${action}`;
+  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { $('#adminStatus').textContent = body.detail || 'Action failed.'; return; }
+  $('#adminStatus').textContent = body.temporary_password
+    ? `New temporary password for ${username} (relay this out-of-band, shown once): ${body.temporary_password}`
+    : 'Done.';
+  loadUserList();
+});
+
+$('#createUserBtn').onclick = entry(async () => {
+  const username = $('#newUserName').value.trim(), password = $('#newUserPassword').value,
+        role = $('#newUserRole').value;
+  const res = await fetch('/admin/users', { method: 'POST', credentials: 'same-origin',
+    headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ username, password, role }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { $('#adminStatus').textContent = body.detail || 'Could not create user.'; return; }
+  $('#newUserName').value = ''; $('#newUserPassword').value = '';
+  $('#adminStatus').textContent = `Created ${username} (${role}); they must change the temporary password at first login.`;
+  loadUserList();
+});
 
 function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
 
@@ -569,8 +691,9 @@ $('#reportBtn').onclick = entry(async () => {
   // The endpoint is a POST (it writes the PDF and audits the generation), so a bare window.open --
   // a GET with no way to attach the bearer header -- can't call it. Fetch the PDF and hand the
   // browser the bytes as a download instead.
-  const res = await fetch(`/assessments/${currentId}/report`, { method:'POST', headers: authHeaders() });
-  if (res.status === 401) { handleUnauthenticated(); return; }
+  const res = await fetch(`/assessments/${currentId}/report`,
+                          { method:'POST', credentials:'same-origin', headers: authHeaders() });
+  if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); return; }
   if (!res.ok) return alert(await res.text());
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement('a');
@@ -585,8 +708,8 @@ $('#importBtn').onclick = entry(async () => {
   if(!f) return alert('Choose a file');
   const fd = new FormData(); fd.append('file', f);
   const res = await fetch(`/assessments/${currentId}/import/${$('#importTool').value}`,
-                          {method:'POST', body: fd, headers: authHeaders()});
-  if (res.status === 401) { handleUnauthenticated(); return; }
+                          {method:'POST', credentials:'same-origin', body: fd, headers: authHeaders()});
+  if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); return; }
   if(!res.ok) return alert(await res.text());
   await refresh();
 });
@@ -663,19 +786,24 @@ function render(){
        confidence=${esc(f.confidence)} risk=${esc(f.risk_score)} tools=${esc((f.source_tools||[]).join(','))}</div>
       ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${esc(refs.join(', '))}</div>` : ''}
       ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#e8b465">ATT&amp;CK (indicative): ${esc(f.mitre_attack.join('; '))}</div>` : ''}
-      ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' ?
+      ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' && currentRole !== 'viewer' ?
         `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}')">Request active-validation approval</button>` : ''}
     </div>`;
   }).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
 
+  // Deciding/executing active validation needs role 'lead' or 'admin' server-side (a real
+  // separation of duties -- the analyst who requested it can't also approve it); hide the controls
+  // for anyone else rather than show a button that would just 403.
+  const canApprove = currentRole === 'lead' || currentRole === 'admin';
   $('#approvals').innerHTML = (current.approvals||[]).map(a => `
     <div class="card">
       <div>${esc(a.action)}</div>
       <div class="mono">state=${esc(a.state)} outcome=${esc(a.outcome||'-')}
         requested_by=${esc(a.requested_by||'-')} decided_by=${esc(a.decided_by||'-')} executed_by=${esc(a.executed_by||'-')}</div>
-      ${a.state==='pending' ? `<div class="row" style="margin-top:6px">
+      ${a.state==='pending' && canApprove ? `<div class="row" style="margin-top:6px">
         <button onclick="decideApproval('${esc(a.id)}', true)">Approve &amp; execute</button>
         <button class="ghost" onclick="decideApproval('${esc(a.id)}', false)">Deny</button></div>` : ''}
+      ${a.state==='pending' && !canApprove ? `<div class="mono" style="margin-top:4px;color:var(--muted)">Awaiting a 'lead' or 'admin' to decide.</div>` : ''}
     </div>`).join('') || '<div class="mono">No approval requests yet.</div>';
 
   // Every call above replaced #plan/#findings/#approvals wholesale, so their buttons are brand
