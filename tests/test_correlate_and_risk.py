@@ -65,6 +65,55 @@ def test_false_positive_candidate_scores_lower():
     assert b.risk_score < a.risk_score
 
 
+# F7: boundary tests for risk.score() -- confidence/CVSS at their exact limits, and an asset with
+# no asset_criticality entry at all (the no-override default path).
+
+def test_score_handles_confidence_exactly_zero_and_one():
+    scope = ScopeModel(targets=["10.10.10.5"], lab_attestation=True)
+    lo = Finding(title="t", asset="10.10.10.5", severity="medium", cvss=5.0, confidence=0.0)
+    hi = lo.model_copy(deep=True)
+    hi.confidence = 1.0
+    score(lo, scope)
+    score(hi, scope)
+    assert lo.risk_breakdown["confidence_factor"] == 0.5    # 0.5 + 0.5*0
+    assert hi.risk_breakdown["confidence_factor"] == 1.0    # 0.5 + 0.5*1
+    assert abs(hi.risk_score - lo.risk_score * 2) < 0.2      # conf_factor doubles (modulo rounding)
+    assert lo.priority in ("P1", "P2", "P3", "P4")
+    assert hi.priority in ("P1", "P2", "P3", "P4")
+
+
+def test_score_handles_cvss_exactly_zero_without_estimating_it():
+    scope = ScopeModel(targets=["10.10.10.5"], lab_attestation=True)
+    f = Finding(title="t", asset="10.10.10.5", severity="info", cvss=0.0, confidence=0.5)
+    score(f, scope)
+    assert f.cvss == 0.0
+    assert f.cvss_estimated is False    # an explicit 0 was given; never silently replaced
+    assert f.risk_score is not None and f.risk_score >= 0
+    assert f.priority == "P4"
+
+
+def test_score_handles_cvss_exactly_ten():
+    scope = ScopeModel(targets=["10.10.10.5"], lab_attestation=True)
+    f = Finding(title="t", asset="10.10.10.5", severity="critical", cvss=10.0,
+               confidence=1.0, exploit_available=True, port=22, service="ssh")
+    score(f, scope)
+    assert f.cvss == 10.0
+    assert f.risk_breakdown["cvss"] == 10.0
+    assert 0 <= f.risk_score <= 100
+    assert f.priority == "P1"
+
+
+def test_score_uses_the_medium_default_when_asset_criticality_has_no_entry():
+    """No `asset_criticality` override at all for this asset -- not even an empty dict value --
+    must fall back to 'medium' rather than raising a KeyError or silently scoring as if the asset
+    had no impact weight."""
+    scope = ScopeModel(targets=["10.10.10.5"], lab_attestation=True, asset_criticality={})
+    f = Finding(title="t", asset="10.10.10.5", severity="medium", cvss=5.0, confidence=0.5)
+    score(f, scope)
+    assert f.risk_breakdown["asset_impact"]["criticality"] == "medium"
+    assert f.risk_breakdown["asset_impact"]["set_by"] == "default"
+
+
 def test_parse_cvss_vector_extracts_metrics():
     m = parse_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
     assert m == {"CVSS": "3.1", "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",

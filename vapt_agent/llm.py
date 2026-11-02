@@ -26,6 +26,16 @@ def _client():
     return anthropic.Anthropic()
 
 
+def _scrub_secret(text: str) -> str:
+    """B7: belt-and-suspenders against a hypothetical future Anthropic SDK version that ever
+    echoed the API key back inside an exception's own string representation (SECURITY.md notes
+    this as a residual, currently-theoretical risk). Logging the exception is useful for
+    debugging a fallback; logging the raw key is never acceptable, so the key's own value -- if
+    it's set at all -- is redacted out of whatever we're about to log, unconditionally."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    return text.replace(key, "[REDACTED]") if key else text
+
+
 _HEDGE_THRESHOLD = 0.6   # fraction of findings still 'suspected' that triggers an explicit caveat
 
 
@@ -73,9 +83,9 @@ def summarize_assessment(a: Assessment, findings: list[Finding]) -> str:
                                       messages=[{"role": "user", "content": prompt}])
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
         return (text + hedge) if text else template
-    except Exception:  # noqa: BLE001
-        logger.warning("LLM executive-summary call failed; falling back to the deterministic template",
-                       exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM executive-summary call failed; falling back to the deterministic "
+                       "template: %s: %s", type(exc).__name__, _scrub_secret(str(exc)))
         return template
 
 

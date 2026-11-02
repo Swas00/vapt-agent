@@ -49,6 +49,13 @@ def _client():
     return anthropic.Anthropic()
 
 
+def _scrub_secret(text: str) -> str:
+    """B7: see llm.py's identical helper -- redacts ANTHROPIC_API_KEY's own value out of anything
+    about to be logged, in case a future SDK version ever echoed it back in an exception."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    return text.replace(key, "[REDACTED]") if key else text
+
+
 def _strip_code_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -88,9 +95,9 @@ def arbitrate(context: str, candidates: list[dict]) -> Optional[list[Verdict]]:
         text = "".join(b.text for b in resp.content if b.type == "text")
         data = json.loads(_strip_code_fence(text))
         batch = VerdictBatch.model_validate(data)
-    except Exception:  # noqa: BLE001 - any failure here must fall back, never raise into the pipeline
-        logger.warning("LLM plan-step arbitration call failed; falling back to the rule-based ranking",
-                       exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - any failure here must fall back, never raise into the pipeline
+        logger.warning("LLM plan-step arbitration call failed; falling back to the rule-based "
+                       "ranking: %s: %s", type(exc).__name__, _scrub_secret(str(exc)))
         return None
     clean = [v for v in batch.verdicts if v.id in allowed_ids]
     if not clean:

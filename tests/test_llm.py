@@ -113,3 +113,29 @@ def test_llm_path_failure_is_logged_not_silently_swallowed(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="vapt_agent.llm"):
         llm.summarize_assessment(_assessment(), [_f("confirmed")])
     assert "falling back" in caplog.text.lower()
+
+
+# B7: the API key must never reach a log line, even in the hypothetical case where it shows up
+# inside an exception's own string representation (SECURITY.md's noted residual risk).
+
+def test_api_key_is_redacted_even_if_the_exception_message_contains_it(monkeypatch, caplog):
+    secret = "sk-ant-totally-real-secret-12345"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            raise RuntimeError(f"401 unauthorized for key {secret}")
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    monkeypatch.setattr(llm, "_client", lambda: FakeClient())
+    with caplog.at_level("WARNING", logger="vapt_agent.llm"):
+        llm.summarize_assessment(_assessment(), [_f("confirmed")])
+    assert secret not in caplog.text
+    assert "[REDACTED]" in caplog.text
+
+
+def test_scrub_secret_is_a_no_op_when_no_key_is_configured(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert llm._scrub_secret("plain message") == "plain message"

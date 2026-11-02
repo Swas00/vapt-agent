@@ -108,6 +108,25 @@ def test_sdk_exception_is_logged_not_silently_swallowed(monkeypatch, caplog):
     assert "falling back" in caplog.text.lower()
 
 
+# B7: see test_llm.py's identical test -- the API key must never reach a log line even if it
+# somehow shows up inside an exception's own string representation.
+
+def test_api_key_is_redacted_even_if_the_exception_message_contains_it(monkeypatch, caplog):
+    secret = "sk-ant-totally-real-secret-12345"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+    monkeypatch.setattr(reasoning, "_client",
+                        lambda: FakeClient(raise_exc=RuntimeError(f"401 unauthorized for key {secret}")))
+    with caplog.at_level("WARNING", logger="vapt_agent.reasoning"):
+        reasoning.arbitrate("ctx", CANDIDATES)
+    assert secret not in caplog.text
+    assert "[REDACTED]" in caplog.text
+
+
+def test_scrub_secret_is_a_no_op_when_no_key_is_configured(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert reasoning._scrub_secret("plain message") == "plain message"
+
+
 def test_unknown_id_is_filtered_out(monkeypatch):
     """The model invents an id that was never in the candidate list -- it must be dropped, not
     passed through."""
