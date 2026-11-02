@@ -217,6 +217,49 @@ test('"Start assessment" shows a busy state while the request is in flight, then
   assert.ok(!ui.$('#createBtn').classList.contains('is-busy'));
 });
 
+test('inline validation blocks an empty-target submit before any server round-trip (PL-5)', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#targets').value = '';
+  ui.$('#createBtn').click();
+  await settle();
+  assert.match(ui.$('#createFormError').textContent, /at least one authorized target/);
+  assert.ok(!ui.calls.some((c) => c.url === '/assessments'));
+});
+
+test('inline validation blocks a submit without the lab attestation checked (PL-5)', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#attest').checked = false;
+  ui.$('#createBtn').click();
+  await settle();
+  assert.match(ui.$('#createFormError').textContent, /attest/);
+  assert.ok(!ui.calls.some((c) => c.url === '/assessments'));
+});
+
+test('a valid submit clears any previous inline form error (PL-5)', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#targets').value = '';
+  ui.$('#createBtn').click();
+  await settle();
+  assert.notEqual(ui.$('#createFormError').textContent, '');
+  ui.$('#targets').value = '10.10.10.5';
+  ui.$('#createBtn').click();
+  await settle();
+  assert.equal(ui.$('#createFormError').textContent, '');
+  assert.ok(ui.calls.some((c) => c.url === '/assessments'));
+});
+
 test('scope inputs are saved to localStorage on submit and restored on the next page load (PL-3)', async () => {
   const ui1 = boot({
     respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },

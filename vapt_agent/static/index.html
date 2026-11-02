@@ -478,6 +478,7 @@ void main(void){
       <label class="row"><input type="checkbox" id="attest" style="width:auto" checked /> &nbsp;I attest these are organizer-provided lab targets</label>
       <label class="row"><input type="checkbox" id="allowActive" style="width:auto" /> &nbsp;Allow active validation (still requires per-finding approval)</label>
       <button id="createBtn" style="margin-top:12px">Start assessment</button>
+      <div id="createFormError" class="mono" role="alert" style="color:var(--crit);margin-top:6px"></div>
     </div>
 
     <div id="assessmentMeta"></div>
@@ -794,7 +795,20 @@ $('#createUserBtn').onclick = busyEntry($('#createUserBtn'), async () => {
 
 function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
 
+// PL-5: catch the obvious, entirely-client-decidable mistakes (nothing entered, no target, the
+// attestation unchecked) before a round-trip -- the server still re-validates everything itself
+// (scope.py), this is purely a faster/friendlier first pass, never the actual authorization check.
+function validateCreateForm() {
+  if (!$('#request').value.trim()) return 'Describe what you want assessed.';
+  if (split($('#targets').value).length === 0) return 'Enter at least one authorized target.';
+  if (!$('#attest').checked) return 'You must attest these are organizer-provided lab targets.';
+  return '';
+}
+
 $('#createBtn').onclick = busyEntry($('#createBtn'), async () => {
+  const formError = validateCreateForm();
+  $('#createFormError').textContent = formError;
+  if (formError) return;
   saveScopeInputs();
   const body = {
     request: $('#request').value,
