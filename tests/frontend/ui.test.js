@@ -213,6 +213,34 @@ test('"Start assessment" shows a busy state while the request is in flight, then
   assert.ok(!ui.$('#createBtn').classList.contains('is-busy'));
 });
 
+test('scope inputs are saved to localStorage on submit and restored on the next page load (PL-3)', async () => {
+  const ui1 = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui1);
+  ui1.$('#request').value = 'Assess the staging web tier before the demo.';
+  ui1.$('#targets').value = '10.10.10.9, app2.lab.local';
+  ui1.$('#exclusions').value = '10.10.10.9:3389';
+  ui1.$('#allowActive').checked = true;
+  ui1.$('#createBtn').click();
+  await settle();
+  const saved = JSON.parse(ui1.w.localStorage.getItem('vapt_scope_inputs_v1'));
+  assert.equal(saved.targets, '10.10.10.9, app2.lab.local');
+  assert.equal(saved.allowActive, true);
+
+  // A fresh boot is a fresh jsdom window with its own localStorage -- carry the saved value over,
+  // exactly as a real browser would across a reload of the same origin.
+  const ui2 = boot({ respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : null });
+  ui2.w.localStorage.setItem('vapt_scope_inputs_v1', JSON.stringify(saved));
+  // The inline script already ran during JSDOM parsing (before this line), so re-run the restore
+  // explicitly to exercise it against the now-populated localStorage, exactly as page load does.
+  ui2.w.restoreScopeInputs();
+  assert.equal(ui2.$('#targets').value, '10.10.10.9, app2.lab.local');
+  assert.equal(ui2.$('#exclusions').value, '10.10.10.9:3389');
+  assert.equal(ui2.$('#allowActive').checked, true);
+});
+
 test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials are same-origin', async () => {
   const ui = boot({
     respond: (url, opts) => {

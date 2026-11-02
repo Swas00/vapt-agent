@@ -532,6 +532,32 @@ void main(void){
 const $ = s => document.querySelector(s);
 let currentId = null, current = null, eventStream = null;
 
+// PL-3: remember the last-used scope inputs across page loads/sessions (the request text, targets,
+// exclusions, and the two checkboxes) purely as an analyst convenience -- re-running a demo or
+// picking back up after a refresh shouldn't mean retyping the same lab scope every time. Wrapped in
+// try/catch since localStorage can throw (private browsing, disabled site data).
+const SCOPE_STORAGE_KEY = 'vapt_scope_inputs_v1';
+function restoreScopeInputs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SCOPE_STORAGE_KEY) || 'null');
+    if (!saved) return;
+    if (typeof saved.request === 'string') $('#request').value = saved.request;
+    if (typeof saved.targets === 'string') $('#targets').value = saved.targets;
+    if (typeof saved.exclusions === 'string') $('#exclusions').value = saved.exclusions;
+    if (typeof saved.attest === 'boolean') $('#attest').checked = saved.attest;
+    if (typeof saved.allowActive === 'boolean') $('#allowActive').checked = saved.allowActive;
+  } catch {}
+}
+function saveScopeInputs() {
+  try {
+    localStorage.setItem(SCOPE_STORAGE_KEY, JSON.stringify({
+      request: $('#request').value, targets: $('#targets').value, exclusions: $('#exclusions').value,
+      attest: $('#attest').checked, allowActive: $('#allowActive').checked,
+    }));
+  } catch {}
+}
+restoreScopeInputs();
+
 // Finding titles, tool output, and event messages all ultimately trace back to scan results --
 // i.e. to the target system being assessed, not to this app's own operator. Nothing from there
 // is trusted: every dynamic value below goes through esc() before it's inserted as innerHTML, so
@@ -769,6 +795,7 @@ $('#createUserBtn').onclick = busyEntry($('#createUserBtn'), async () => {
 function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
 
 $('#createBtn').onclick = busyEntry($('#createBtn'), async () => {
+  saveScopeInputs();
   const body = {
     request: $('#request').value,
     scope: {
