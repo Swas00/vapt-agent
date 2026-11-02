@@ -15,6 +15,7 @@ separation of duties, not just "any logged-in person."
 from __future__ import annotations
 
 import asyncio
+import csv as _csv
 import hmac as _hmac
 import io as _io
 import json as _json
@@ -640,6 +641,42 @@ def report(assessment_id: str, principal: Principal = Depends(require_role("anal
     a.state = "reported"
     audit.append(principal.username, "report.generated", assessment=a.id, path=str(out))
     return FileResponse(str(out), media_type="application/pdf", filename=f"VAPT-{a.id}.pdf")
+
+
+# FS-3: JSON/CSV export alongside the PDF report. The PDF is the mandatory PS-7 deliverable
+# (narrative, impact, remediation); these exist for a judge/analyst who wants the finding data in a
+# machine-readable form -- to pipe into a ticketing system, a spreadsheet, or another report
+# template -- without re-deriving it from the PDF. Read-only, so viewer role is enough, same as
+# GET /assessments/{id} which already returns the same underlying data as inline JSON.
+CSV_FINDING_COLUMNS = ["id", "title", "asset", "port", "proto", "service", "severity", "cvss",
+                      "cve", "confidence", "status", "validation_status", "remediation_status",
+                      "risk_score", "priority", "source_tools"]
+
+
+@app.get("/assessments/{assessment_id}/export.json")
+def export_json(assessment_id: str, principal: Principal = Depends(require_role("viewer"))):
+    a = _get(assessment_id)
+    audit.append(principal.username, "export.generated", assessment=a.id, format="json")
+    return Response(a.model_dump_json(indent=2), media_type="application/json",
+                    headers={"Content-Disposition": f"attachment; filename=VAPT-{assessment_id}.json"})
+
+
+@app.get("/assessments/{assessment_id}/export.csv")
+def export_csv(assessment_id: str, principal: Principal = Depends(require_role("viewer"))):
+    """One row per correlated finding -- the same `findings` list the PDF report renders,
+    not the pre-correlation `raw_findings`, so the row count matches what the report shows."""
+    a = _get(assessment_id)
+    buf = _io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=CSV_FINDING_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for f in a.findings:
+        row = f.model_dump()
+        row["cve"] = ";".join(row.get("cve") or [])
+        row["source_tools"] = ";".join(row.get("source_tools") or [])
+        writer.writerow(row)
+    audit.append(principal.username, "export.generated", assessment=a.id, format="csv")
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=VAPT-{assessment_id}.csv"})
 
 
 def _scoped_audit_entries(assessment_id: str) -> list[dict]:

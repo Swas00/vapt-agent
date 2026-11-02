@@ -502,6 +502,59 @@ def test_evidence_pack_requires_analyst_role(env):
     assert r.status_code == 403
 
 
+# FS-3: JSON/CSV export alongside the PDF report.
+
+def test_export_json_returns_the_full_assessment_as_a_download(env):
+    import json
+
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    env.client.post(f"/assessments/{a['id']}/report", headers=hdr)
+
+    r = env.client.get(f"/assessments/{a['id']}/export.json", headers=hdr)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/json"
+    assert f"VAPT-{a['id']}.json" in r.headers["content-disposition"]
+    body = json.loads(r.content)
+    assert body["id"] == a["id"]
+    assert body["findings"]
+    assert env.entries("export.generated")[0]["actor"] == "bob"
+    assert env.entries("export.generated")[0]["details"]["format"] == "json"
+
+
+def test_export_csv_has_one_row_per_correlated_finding(env):
+    import csv
+    import io
+
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    assess = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()
+
+    r = env.client.get(f"/assessments/{a['id']}/export.csv", headers=hdr)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert f"VAPT-{a['id']}.csv" in r.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(r.content.decode())))
+    assert len(rows) == len(assess["findings"])
+    if rows:
+        assert {"id", "title", "asset", "severity", "cve"} <= rows[0].keys()
+    assert any(e["details"]["format"] == "csv" for e in env.entries("export.generated"))
+
+
+def test_export_is_readable_by_viewer_role(env):
+    """Exports are read-only renderings of data a viewer can already see via GET /assessments/{id}."""
+    a = create_assessment(env, "alice")
+    viewer_hdr = session(env, "victor")
+    r = env.client.get(f"/assessments/{a['id']}/export.json", headers=viewer_hdr)
+    assert r.status_code == 200
+    r = env.client.get(f"/assessments/{a['id']}/export.csv", headers=viewer_hdr)
+    assert r.status_code == 200
+
+
 def test_oversized_import_rejected_with_413_not_buffered(env):
     a = create_assessment(env, "bob")
     hdr = session(env, "bob")
