@@ -501,6 +501,7 @@ void main(void){
 
     <button id="analyseBtn" class="ghost" style="width:100%;margin-top:8px">Correlate &amp; prioritize findings</button>
     <button id="reportBtn" style="width:100%;margin-top:8px">Generate VAPT PDF report</button>
+    <button id="evidencePackBtn" class="ghost" style="width:100%;margin-top:8px">Download evidence pack (.zip)</button>
   </div>
 
   <div class="col" id="right">
@@ -803,6 +804,21 @@ $('#reportBtn').onclick = busyEntry($('#reportBtn'), async () => {
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement('a');
   link.href = url; link.download = `VAPT-${currentId}.pdf`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+});
+
+$('#evidencePackBtn').onclick = busyEntry($('#evidencePackBtn'), async () => {
+  if(!currentId) return showError('Start or select an assessment first');
+  // Same reasoning as the report button above: this is a POST (it also regenerates the report
+  // and audits the export), so fetch the zip and hand the bytes to the browser as a download.
+  const res = await fetch(`/assessments/${currentId}/evidence-pack`,
+                          { method:'POST', credentials:'same-origin', headers: authHeaders() });
+  if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); return; }
+  if (!res.ok) return showError(await res.text());
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url; link.download = `evidence-pack-${currentId}.zip`;
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 });

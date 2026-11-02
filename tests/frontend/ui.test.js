@@ -510,6 +510,23 @@ test('report generation POSTs with credentials+CSRF and downloads the PDF', asyn
   assert.deepEqual(ui.downloads.map((d) => d.download), ['VAPT-asm-1.pdf']);
 });
 
+test('evidence-pack download POSTs with credentials+CSRF and downloads the zip', async () => {
+  const ui = boot({
+    respond: (url) => url === '/login' ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#evidencePackBtn').click();
+  await settle();
+  const call = ui.calls.find((c) => c.url === '/assessments/asm-1/evidence-pack');
+  assert.ok(call);
+  assert.equal(call.opts.credentials, 'same-origin');
+  assert.equal(ui.csrfOf(call), CSRF);
+  assert.deepEqual(ui.downloads.map((d) => d.download), ['evidence-pack-asm-1.zip']);
+});
+
 // ---- role-gated UI --------------------------------------------------------------------------------
 
 test('a lead sees Approve/Deny on a pending approval; an analyst does not', async () => {
