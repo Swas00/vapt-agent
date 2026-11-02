@@ -28,6 +28,7 @@ class Nikto(Adapter):
     binary = "nikto"
     live_status = "live"
     out_ext = "json"
+    import_extensions = {"json"}
     note = "Subprocess execution with -Format json; also imports Nikto JSON."
     presets = {"default": []}
 
@@ -71,6 +72,7 @@ class Zap(Adapter):
     live = True
     live_status = "live"
     out_ext = "json"
+    import_extensions = {"json"}
     note = "Live via ZAP REST API (ZAP_URL, ZAP_API_KEY): spider + passive, optional active scan. Also imports JSON reports."
     presets = {"baseline": [], "active": []}
     intrusive_presets = {"active"}
@@ -169,6 +171,7 @@ class Burp(Adapter):
     live = False
     live_status = "import-only"
     out_ext = "xml"
+    import_extensions = {"xml"}
     note = ("Burp Suite issue-export XML import. Live scanning needs Burp Suite Professional's REST API "
             "(licensed) and is NOT implemented.")
 

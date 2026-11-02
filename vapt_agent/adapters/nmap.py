@@ -19,6 +19,7 @@ class Nmap(Adapter):
     binary = "nmap"
     live_status = "live"
     out_ext = "xml"
+    import_extensions = {"xml"}
     note = "Subprocess execution with -oX; also imports Nmap XML. NSE restricted to non-intrusive allow-list."
     presets = {
         "discovery": ["-sV", "-Pn", "--top-ports", "1000", "--open", "-T3", "--version-light"],

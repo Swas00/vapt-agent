@@ -35,6 +35,14 @@ class Adapter:
     note = ""
     presets: dict[str, list[str]] = {}
     intrusive_presets: set[str] = set()
+    # B3: lower-cased file extensions (no dot) this adapter's import accepts, e.g. {"xml"}. Empty
+    # means "no restriction" -- the default, so adding this to the base class never silently
+    # breaks an adapter that doesn't override it. Checked against the UPLOADED filename in api.py,
+    # before the file is even parsed: a well-formed-but-wrong-tool file (e.g. an Nmap XML export
+    # uploaded to the Nessus import route) is a clean, specific 400 instead of either an opaque
+    # parse-error 400 or -- worse -- parsing "successfully" into nonsense because the wrong
+    # format happened to not raise.
+    import_extensions: set[str] = set()
 
     def available(self) -> bool:
         return bool(self.binary and shutil.which(self.binary))

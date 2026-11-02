@@ -728,6 +728,16 @@ def get_run(assessment_id: str, run_id: str, principal: Principal = Depends(requ
 async def import_result(assessment_id: str, tool: str, file: UploadFile = File(...),
                         principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
+    adapter = orch.adapters.get(tool)
+    if adapter is None:
+        raise HTTPException(400, f"no adapter registered for tool '{tool}'")
+    # B3: reject an obviously wrong-tool file by extension BEFORE reading/writing/parsing it --
+    # e.g. a ZAP JSON export posted to the Nmap import route. An empty `import_extensions` means
+    # the adapter declared no restriction (checked defensively, but every adapter sets one).
+    ext = Path(file.filename or "").suffix.lstrip(".").lower()
+    if adapter.import_extensions and ext not in adapter.import_extensions:
+        raise HTTPException(400, f"'{tool}' import expects a file extension of "
+                                 f"{sorted(adapter.import_extensions)}, got '{ext or '(none)'}'")
     content = await _read_upload_capped(file)
     dest = DATA_DIR / assessment_id / "raw" / _safe_filename(file.filename)
     dest.parent.mkdir(parents=True, exist_ok=True)

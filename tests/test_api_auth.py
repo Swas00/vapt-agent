@@ -690,6 +690,45 @@ def test_malformed_import_body_is_a_clean_400_not_a_500(env):
     assert "could not parse" in r.text
 
 
+# B3: content-type/extension allow-list per tool, checked BEFORE the file is parsed.
+
+def test_import_rejects_a_wrong_extension_before_ever_parsing_it(env):
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    # a .json file (ZAP's format) posted to the nmap route, which only accepts .xml
+    r = env.client.post(f"/assessments/{a['id']}/import/nmap", headers=hdr,
+                        files={"file": ("zap-export.json", b'{"site": []}', "application/json")})
+    assert r.status_code == 400
+    assert "extension" in r.text.lower()
+
+
+def test_import_accepts_every_extension_its_own_adapter_declares(env):
+    from vapt_agent.adapters import registry
+
+    a = create_assessment(env, "bob")
+    for tool, adapter in registry().items():
+        if not adapter.import_extensions:
+            continue
+        hdr = session(env, "bob")
+        for ext in sorted(adapter.import_extensions):
+            r = env.client.post(f"/assessments/{a['id']}/import/{tool}", headers=hdr,
+                                files={"file": (f"ok.{ext}", b"not actually valid content", "application/octet-stream")})
+            # The extension passes the allow-list; it then fails to PARSE (this body is garbage),
+            # which must still be the existing clean 400, never a 500 and never a 400 that claims
+            # the extension itself was the problem.
+            assert r.status_code == 400, f"{tool}/{ext}: {r.status_code} {r.text}"
+            assert "extension" not in r.text.lower(), f"{tool}/{ext}: {r.text}"
+
+
+def test_import_with_no_extension_at_all_is_rejected(env):
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    r = env.client.post(f"/assessments/{a['id']}/import/nmap", headers=hdr,
+                        files={"file": ("noextension", b"<a/>", "application/xml")})
+    assert r.status_code == 400
+    assert "extension" in r.text.lower()
+
+
 def test_run_step_returns_running_immediately_and_is_pollable_to_completion(env, monkeypatch):
     def fake_run(target, preset, workdir, timeout=900):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")

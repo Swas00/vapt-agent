@@ -17,6 +17,7 @@ class Nessus(Adapter):
     live = False
     live_status = "import-only"
     out_ext = "nessus"
+    import_extensions = {"nessus", "xml"}   # a .nessus file IS XML; some exporters keep the .xml name
     note = ("Imports .nessus (NessusClientData_v2) exports. Live API control needs a licensed Nessus "
             "(Essentials/Pro/Expert) instance and is NOT implemented.")
 
@@ -54,6 +55,7 @@ class OpenVAS(Adapter):
     live = False
     live_status = "import-only"
     out_ext = "xml"
+    import_extensions = {"xml"}
     note = ("Imports Greenbone/OpenVAS XML reports (get_reports). Live control via GMP (python-gvm) "
             "is planned, NOT implemented.")
 
