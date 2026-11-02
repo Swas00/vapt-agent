@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, Optional
 
 from ..models import Evidence, Finding, Service, ToolRun, now
 from ..risk import severity_from_cvss
@@ -51,7 +52,13 @@ class Adapter:
     def command(self, target: str, preset: str, out: Path) -> list[str]:
         raise NotImplementedError
 
-    def run(self, target: str, preset: str, workdir: Path, timeout: int = 900) -> ToolRun:
+    def run(self, target: str, preset: str, workdir: Path, timeout: int = 900,
+           on_start: Optional[Callable[[subprocess.Popen], None]] = None) -> ToolRun:
+        """`on_start`, when given, is called with the live `subprocess.Popen` handle right after
+        it's launched -- before this method blocks on it finishing. A2's cancel feature uses this
+        to hand the orchestrator a handle it can `.terminate()` from a different thread while this
+        call is still blocked in `communicate()`; nothing else about this method's behaviour
+        (equivalent to the plain `subprocess.run()` this replaced) changes because of it."""
         run = ToolRun(tool=self.name, mode="live", target=target, preset=preset, started=now(), status="running")
         if not self.live:
             run.status, run.error, run.finished = "unavailable", f"{self.name} has no live adapter (import-only)", now()
@@ -63,17 +70,24 @@ class Adapter:
         out = workdir / f"{self.name}-{run.id}.{self.out_ext}"
         cmd = self.command(target, preset, out)
         run.command = cmd
+        proc: Optional[subprocess.Popen] = None
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, shell=False)
-            if not out.exists() and proc.stdout:
-                out.write_text(proc.stdout)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if on_start:
+                on_start(proc)
+            stdout, stderr = proc.communicate(timeout=timeout)
+            if not out.exists() and stdout:
+                out.write_text(stdout)
             if proc.returncode != 0 and not out.exists():
-                run.status, run.error = "failed", clip(proc.stderr, 800)
+                run.status, run.error = "failed", clip(stderr, 800)
             else:
                 run.status = "ok"
                 if proc.returncode != 0:
-                    run.error = f"exit {proc.returncode}: {clip(proc.stderr, 400)}"
+                    run.error = f"exit {proc.returncode}: {clip(stderr, 400)}"
         except subprocess.TimeoutExpired:
+            if proc is not None:
+                proc.kill()
+                proc.communicate()
             run.status, run.error = "timeout", f"exceeded {timeout}s"
         except OSError as e:
             run.status, run.error = "failed", str(e)

@@ -730,7 +730,7 @@ def test_import_with_no_extension_at_all_is_rejected(env):
 
 
 def test_run_step_returns_running_immediately_and_is_pollable_to_completion(env, monkeypatch):
-    def fake_run(target, preset, workdir, timeout=900):
+    def fake_run(target, preset, workdir, timeout=900, on_start=None):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")
     monkeypatch.setattr(api.orch.adapters["nmap"], "run", fake_run)
 
@@ -755,6 +755,40 @@ def test_poll_unknown_run_id_404s(env):
     hdr = session(env, "alice")
     r = env.client.get(f"/assessments/{a['id']}/runs/no-such-run", headers=hdr)
     assert r.status_code == 404
+
+
+# A2: cancel-a-running-scan route. The actual kill-the-subprocess behaviour is covered at the
+# orchestrator level with real threads (test_orchestrator_e2e.py) -- TestClient runs a
+# BackgroundTask to completion before the triggering request even returns, so there's no window
+# here to observe a run still 'running'; these cover the route's own error handling and role gate.
+
+def test_cancel_an_unknown_run_is_a_clean_400(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.post(f"/assessments/{a['id']}/runs/no-such-run/cancel", headers=hdr)
+    assert r.status_code == 400
+
+
+def test_cancel_a_run_that_already_finished_is_a_clean_400(env, monkeypatch):
+    def fake_run(target, preset, workdir, timeout=900, on_start=None):
+        return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")
+    monkeypatch.setattr(api.orch.adapters["nmap"], "run", fake_run)
+
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    step = a["plan"][0]["id"]
+    env.client.post(f"/assessments/{a['id']}/plan/{step}/decision?approved=true", headers=hdr)
+    run = env.client.post(f"/assessments/{a['id']}/plan/{step}/run", headers=hdr).json()
+
+    r = env.client.post(f"/assessments/{a['id']}/runs/{run['id']}/cancel", headers=hdr)
+    assert r.status_code == 400
+
+
+def test_viewer_cannot_cancel_a_run(env):
+    a = create_assessment(env, "alice")
+    viewer_hdr = session(env, "victor")
+    r = env.client.post(f"/assessments/{a['id']}/runs/whatever/cancel", headers=viewer_hdr)
+    assert r.status_code == 403
 
 
 def test_run_step_is_rate_limited_per_identity(env, monkeypatch):
@@ -788,7 +822,7 @@ def test_execute_approval_is_rate_limited_per_identity(env, monkeypatch):
 
 
 def test_tool_runs_record_who_triggered_them(env, monkeypatch):
-    def fake_run(target, preset, workdir, timeout=900):
+    def fake_run(target, preset, workdir, timeout=900, on_start=None):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="failed",
                        error="stubbed in test")
     monkeypatch.setattr(api.orch.adapters["nmap"], "run", fake_run)

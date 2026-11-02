@@ -943,6 +943,16 @@ const setFalsePositive = entry(async (findingId, marked, btn) => {
   }
 });
 
+const cancelRun = entry(async (runId, btn) => {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    await api(`/assessments/${currentId}/runs/${runId}/cancel`, {method:'POST'});
+    await refresh();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
+});
+
 const requestApproval = entry(async (findingId, btn) => {
   // Built here, from the current in-memory finding, rather than threaded through an inline
   // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
@@ -1033,7 +1043,7 @@ function render(){
   $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b> <button class="ghost" type="button" style="padding:3px 10px;font-size:11px" onclick="copyAssessmentId(this)">Copy ID</button><br><span class="mono">state: ${esc(current.state)}${current.created_by ? ' · opened by ' + esc(current.created_by) : ''}</span></div>`;
 
   function statusClass(s){
-    if (s==='skipped') return 'sev-medium';
+    if (s==='skipped' || s==='cancelled') return 'sev-medium';
     if (s==='failed' || s==='rejected') return 'sev-critical';
     if (s==='done') return 'sev-low';
     return 'sev-info';
@@ -1055,6 +1065,8 @@ function render(){
       ${s.status==='proposed' ? `<div class="row" style="margin-top:6px">
         <button onclick="runStep('${esc(s.id)}',this)">Approve &amp; run</button>
         <button class="ghost" onclick="rejectStep('${esc(s.id)}',this)">Reject</button></div>` : ''}
+      ${s.status==='running' && s.run_id ? `<div class="row" style="margin-top:6px">
+        <button class="ghost" onclick="cancelRun('${esc(s.run_id)}',this)">Cancel scan</button></div>` : ''}
     </div>`).join('') || '<div class="mono">No steps yet.</div>';
 
   $('#events').innerHTML = (current.events||[]).slice().reverse().map(e =>

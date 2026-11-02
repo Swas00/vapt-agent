@@ -94,7 +94,12 @@ class Zap(Adapter):
         r.raise_for_status()
         return r.json()
 
-    def run(self, target: str, preset: str, workdir: Path, timeout: int = 900) -> ToolRun:
+    def run(self, target: str, preset: str, workdir: Path, timeout: int = 900, on_start=None) -> ToolRun:
+        # `on_start` is accepted for interface parity with Adapter.run() (orchestrator.finish_step
+        # calls every adapter uniformly) but unused -- ZAP is driven over its REST API, not a local
+        # subprocess, so there's no Popen handle for A2's cancel feature to terminate here; stopping
+        # an in-progress ZAP scan would need ZAP's own `/JSON/*/action/stop/` endpoints, which is a
+        # real but separate feature this doesn't claim to provide.
         run = ToolRun(tool=self.name, mode="live", target=target, preset=preset, started=now(), status="running",
                       command=[f"ZAP REST {self.url}", "spider", "ascan" if preset == "active" else "passive"])
         if not self.available():

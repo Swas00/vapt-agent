@@ -833,6 +833,45 @@ test('changing a finding\'s remediation select posts the new status', async () =
                                && c.opts.method === 'POST'));
 });
 
+test('a running step shows a Cancel scan button that posts to the run-cancel route', async () => {
+  const runningPlan = [{ id: 'step-1', tool: 'nmap', target: '10.10.10.5', preset: 'discovery',
+                        kind: 'discovery', status: 'running', run_id: 'run-1', rationale: 'because',
+                        origin: 'rules', alternatives_considered: [] }];
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (opts.method === 'POST' && /\/runs\/run-1\/cancel$/.test(url)) return { body: {} };
+      return { body: assessment({ plan: runningPlan }) };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  const cancelBtn = [...ui.$('#plan').querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Cancel scan');
+  assert.ok(cancelBtn, 'a Cancel scan button is rendered for a running step');
+  cancelBtn.click();
+  await settle();
+
+  assert.ok(ui.calls.some((c) => /\/assessments\/asm-1\/runs\/run-1\/cancel$/.test(c.url)
+                               && c.opts.method === 'POST'));
+});
+
+test('a proposed (not yet running) step shows no Cancel scan button', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  assert.equal([...ui.$('#plan').querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Cancel scan'), undefined);
+});
+
 test('clicking "Mark FP" posts marked=true for that finding', async () => {
   const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
              status: 'suspected', validation_status: 'not_validated', confidence: 0.5, risk_score: 50,

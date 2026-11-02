@@ -166,7 +166,7 @@ def test_start_step_marks_running_before_finish_step_completes_it(orch, assessme
     the same run id across that transition (a client polling by id must see one record, not two)."""
     from vapt_agent.models import ToolRun
 
-    def fake_run(target, preset, workdir, timeout=900):
+    def fake_run(target, preset, workdir, timeout=900, on_start=None):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")
     step = next(s for s in assessment.plan if s.tool == "nmap")
     monkeypatch.setattr(orch.adapters["nmap"], "run", fake_run)
@@ -180,6 +180,77 @@ def test_start_step_marks_running_before_finish_step_completes_it(orch, assessme
     assert run.id == run_id                 # same record, updated in place
     assert run.status == "ok" and step.status == "done"
     assert assessment.runs == [run]         # no stray second ToolRun was appended
+
+
+def test_cancel_run_terminates_the_live_subprocess_and_marks_cancelled(orch, assessment):
+    """A2: a genuinely slow subprocess (sleep 5), cancelled mid-flight from a different thread
+    than the one blocked waiting on it -- the real concurrency shape the API's BackgroundTask
+    split creates. Must come back 'cancelled' well before the sleep would have finished on its
+    own, proving the process was actually killed, not just marked cancelled after it finished."""
+    import threading
+    import time
+
+    from vapt_agent.adapters.base import Adapter
+    from vapt_agent.models import PlanStep
+
+    class SleepAdapter(Adapter):
+        name = "sleeptool"
+        live = True
+        out_ext = "txt"
+
+        def available(self):
+            return True
+
+        def command(self, target, preset, out):
+            return ["sleep", "5"]
+
+    orch.adapters["sleeptool"] = SleepAdapter()
+    assessment.scope.allowed_tools.append("sleeptool")
+    step = PlanStep(tool="sleeptool", target="10.10.10.5", preset="default", rationale="x")
+    assessment.plan.append(step)
+    orch.approve_step(assessment, step.id, True)
+    run = orch.start_step(assessment, step.id)
+
+    t = threading.Thread(target=orch.finish_step, args=(assessment, step.id, run.id))
+    t.start()
+    for _ in range(100):
+        if run.id in orch._procs:
+            break
+        time.sleep(0.05)
+    assert run.id in orch._procs, "subprocess never registered in time"
+
+    started = time.monotonic()
+    orch.cancel_run(assessment, run.id, by="alice")
+    t.join(timeout=5)
+    elapsed = time.monotonic() - started
+
+    assert not t.is_alive()
+    assert elapsed < 4.0, f"took {elapsed:.1f}s -- looks like it waited out the sleep instead of killing it"
+    assert run.status == "cancelled"
+    assert step.status == "cancelled"
+    entry = next(e for e in orch.audit.entries() if e["action"] == "tool.cancel_requested")
+    assert entry["actor"] == "alice" and entry["details"]["run"] == run.id
+
+
+def test_cancel_run_rejects_an_unknown_run_id(orch, assessment):
+    with pytest.raises(ScopeError):
+        orch.cancel_run(assessment, "run-does-not-exist")
+
+
+def test_cancel_run_rejects_a_run_that_already_finished(orch, assessment, monkeypatch):
+    from vapt_agent.models import ToolRun
+
+    def fake_run(target, preset, workdir, timeout=900, on_start=None):
+        return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")
+    step = next(s for s in assessment.plan if s.tool == "nmap")
+    monkeypatch.setattr(orch.adapters["nmap"], "run", fake_run)
+    orch.approve_step(assessment, step.id, True)
+    run = orch.start_step(assessment, step.id)
+    orch.finish_step(assessment, step.id, run.id)
+    assert run.status == "ok"
+
+    with pytest.raises(ScopeError):
+        orch.cancel_run(assessment, run.id)
 
 
 def test_analyse_calibrates_confidence_from_other_assessments_history(orch, assessment):

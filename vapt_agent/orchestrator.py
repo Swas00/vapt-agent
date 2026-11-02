@@ -3,6 +3,7 @@ enforcement, the correlator, and the risk engine. Every state transition is writ
 """
 from __future__ import annotations
 
+import subprocess
 import threading
 from pathlib import Path
 
@@ -25,6 +26,13 @@ class Orchestrator:
         self.audit = audit
         self.adapters = registry()
         self._locks: dict[str, threading.Lock] = {}
+        # A2: live subprocess handles for currently-running scans, keyed by ToolRun.id, plus the
+        # set of run ids a cancel was requested for -- both process-wide (not per-assessment),
+        # guarded by their own lock since they're touched from the request thread (cancel_run)
+        # while a DIFFERENT thread is blocked inside Adapter.run()'s subprocess.communicate().
+        self._procs: dict[str, subprocess.Popen] = {}
+        self._cancel_requested: set[str] = set()
+        self._proc_lock = threading.Lock()
 
     def _lock(self, a: Assessment) -> threading.Lock:
         """One lock per assessment, guarding mutation of its runs/plan/findings against a
@@ -120,16 +128,33 @@ class Orchestrator:
     def finish_step(self, a: Assessment, step_id: str, run_id: str, actor: str = "analyst") -> None:
         """Runs the actual scan and folds the result back into the placeholder ToolRun created
         by start_step, in place, so a client polling by run_id sees one record transition
-        running -> done/failed rather than two unrelated run ids."""
+        running -> done/failed rather than two unrelated run ids.
+
+        A2: registers the adapter's live subprocess handle (if any -- see Adapter.run()'s
+        `on_start`) under `run_id` for the duration of the call, so `cancel_run()` on a different
+        thread can terminate it while this thread is blocked waiting on it."""
         step = next(s for s in a.plan if s.id == step_id)
         adapter = self.adapters[step.tool]
-        result = adapter.run(step.target, step.preset, self._workdir(a))
+
+        def _on_start(proc: subprocess.Popen) -> None:
+            with self._proc_lock:
+                self._procs[run_id] = proc
+
+        try:
+            result = adapter.run(step.target, step.preset, self._workdir(a), on_start=_on_start)
+        finally:
+            with self._proc_lock:
+                self._procs.pop(run_id, None)
+                was_cancelled = run_id in self._cancel_requested
+                self._cancel_requested.discard(run_id)
         with self._lock(a):
             run = next(r for r in a.runs if r.id == run_id)
             for field in type(result).model_fields:
                 if field != "id":
                     setattr(run, field, getattr(result, field))
-            step.status = "done" if run.status == "ok" else "failed"
+            if was_cancelled:
+                run.status, run.error = "cancelled", run.error or "cancelled by analyst request"
+            step.status = {"ok": "done", "cancelled": "cancelled"}.get(run.status, "failed")
         # The *execution* is the agent's act, but a human triggered it -- keep both on the record.
         self.audit.append("agent", "tool.run", assessment=a.id, run=run.id, tool=run.tool,
                           target=run.target, status=run.status, raw_sha256=run.raw_sha256, error=run.error,
@@ -139,6 +164,27 @@ class Orchestrator:
         elif run.status != "ok":
             a.limitations.append(f"{run.tool} against {run.target} ({run.preset}): {run.status} -- {run.error}")
             a.events.append(Event(level="error", message=f"{run.tool} failed on {run.target}: {run.error}"))
+
+    def cancel_run(self, a: Assessment, run_id: str, by: str = "analyst") -> ToolRun:
+        """A2: terminates the live subprocess for a currently-running ToolRun. finish_step (on
+        its own thread) sees the process exit, notices `run_id` is in `_cancel_requested`, and
+        labels the ToolRun/PlanStep 'cancelled' itself -- this method only requests it and records
+        the request; it never mutates the ToolRun directly, since that thread is the one actually
+        racing to write it and this avoids a second writer."""
+        run = next((r for r in a.runs if r.id == run_id), None)
+        if run is None:
+            raise ScopeError(f"run {run_id} not found")
+        if run.status != "running":
+            raise ScopeError(f"run {run_id} is '{run.status}', not running")
+        with self._proc_lock:
+            proc = self._procs.get(run_id)
+            if proc is None:
+                raise ScopeError(f"run {run_id} has no live process to cancel "
+                                 "(it may be an adapter with no cancellable subprocess, e.g. ZAP's REST API)")
+            self._cancel_requested.add(run_id)
+            proc.terminate()
+        self.audit.append(by, "tool.cancel_requested", assessment=a.id, run=run_id, tool=run.tool)
+        return run
 
     def run_step(self, a: Assessment, step_id: str, actor: str = "analyst") -> ToolRun:
         """Synchronous convenience wrapper (demo scripts, direct orchestrator use) over the same

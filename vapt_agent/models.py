@@ -117,7 +117,7 @@ class ToolRun(BaseModel):
     target: str
     preset: str = ""
     command: list[str] = Field(default_factory=list)
-    status: Literal["pending", "running", "ok", "failed", "timeout", "unavailable", "skipped"] = "pending"
+    status: Literal["pending", "running", "ok", "failed", "timeout", "unavailable", "skipped", "cancelled"] = "pending"
     started: Optional[str] = None
     finished: Optional[str] = None
     error: str = ""
@@ -137,7 +137,7 @@ class PlanStep(BaseModel):
     trigger_finding_id: Optional[str] = None   # set when this step was proposed in reaction to a Finding
     intrusive: bool = False
     mode: Literal["live", "import"] = "live"
-    status: Literal["proposed", "approved", "running", "done", "failed", "skipped", "rejected"] = "proposed"
+    status: Literal["proposed", "approved", "running", "done", "failed", "skipped", "rejected", "cancelled"] = "proposed"
     origin: Literal["rules", "llm"] = "rules"
     run_id: Optional[str] = None
     skip_reason: str = ""

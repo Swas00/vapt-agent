@@ -724,6 +724,19 @@ def get_run(assessment_id: str, run_id: str, principal: Principal = Depends(requ
     return run
 
 
+@app.post("/assessments/{assessment_id}/runs/{run_id}/cancel")
+def cancel_run(assessment_id: str, run_id: str, principal: Principal = Depends(require_role("analyst"))):
+    """A2: terminates the live subprocess for a currently-running scan. The ToolRun/PlanStep
+    themselves are mutated by the background finish_step call noticing the cancellation, not by
+    this request -- poll GET .../runs/{run_id} same as always to see it land as 'cancelled'."""
+    a = _get(assessment_id)
+    try:
+        run = orch.cancel_run(a, run_id, by=principal.username)
+    except ScopeError as e:
+        raise HTTPException(400, str(e))
+    return run
+
+
 @app.post("/assessments/{assessment_id}/import/{tool}")
 async def import_result(assessment_id: str, tool: str, file: UploadFile = File(...),
                         principal: Principal = Depends(require_role("analyst"))):
