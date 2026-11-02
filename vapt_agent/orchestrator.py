@@ -10,7 +10,7 @@ from . import calibration, correlate, frameworks, planner, risk
 from .adapters import registry
 from .adapters.infra import Metasploit
 from .audit import AuditLog
-from .models import Approval, Assessment, Event, Finding, PlanStep, ScopeModel, ToolRun
+from .models import Approval, Assessment, Batch, Event, Finding, PlanStep, ScopeModel, ToolRun
 from .scope import check as scope_check
 from .scope import validate_scope
 
@@ -48,6 +48,32 @@ class Orchestrator:
             self.audit.append("agent", "plan.step_proposed", assessment=a.id, step=step.id,
                               tool=step.tool, target=step.target, rationale=step.rationale)
         return a
+
+    def create_batch(self, name: str, request: str, targets: list[str], scope_template: ScopeModel,
+                     actor: str = "analyst") -> tuple[Batch, list[Assessment]]:
+        """FS-4: one `Assessment` per target, each independently scope-checked and planned exactly
+        as `create()` already does for a single-target request -- a Batch never merges targets
+        into one assessment's scope, because that would also merge their state (one target's scan
+        failing would look like the whole batch failing) and their audit trail. `scope_template`
+        supplies every scope field EXCEPT targets, which is overridden per member to that one
+        target; this also means a scope problem specific to one target (out-of-scope exclusion,
+        say) only rejects that target, not the whole batch -- collected as one combined error if
+        every single target in the batch gets rejected, but a partial batch is allowed to proceed
+        with whichever targets did validate, since analysts commonly paste a mixed list."""
+        members: list[Assessment] = []
+        problems: list[str] = []
+        for target in targets:
+            member_scope = scope_template.model_copy(update={"targets": [target]})
+            try:
+                members.append(self.create(request, member_scope, actor=actor))
+            except ScopeError as e:
+                problems.append(f"{target}: {e}")
+        if not members:
+            raise ScopeError("; ".join(problems) or "no targets supplied")
+        batch = Batch(name=name, created_by=actor, assessment_ids=[a.id for a in members])
+        self.audit.append(actor, "batch.create", batch=batch.id, name=name,
+                          assessments=batch.assessment_ids, rejected_targets=problems)
+        return batch, members
 
     def _workdir(self, a: Assessment) -> Path:
         return self.data_dir / a.id / "raw"

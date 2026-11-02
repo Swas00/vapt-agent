@@ -38,10 +38,10 @@ from pydantic import BaseModel
 from . import accounts
 from . import diff as diffmod
 from .audit import AuditLog
-from .models import Assessment, ScopeModel
+from .models import Assessment, Batch, ScopeModel
 from .orchestrator import Orchestrator, ScopeError
 from .report import generate as generate_report
-from .store import AssessmentStore
+from .store import AssessmentStore, BatchStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ SESSION_COOKIE = "vapt_session"
 audit = AuditLog(DATA_DIR / "audit.log")
 orch = Orchestrator(DATA_DIR, audit)
 ASSESSMENTS: dict[str, Assessment] = {}
+BATCHES: dict[str, Batch] = {}
 
 # Built in the app lifespan, not at import -- so merely importing this module (e.g. a test) never
 # creates data/auth.db or a bootstrap admin on disk. Tests construct their own AccountStore.
@@ -63,6 +64,7 @@ account_store: accounts.AccountStore | None = None
 # never create data/assessments.db. Tests that want persistence monkeypatch this directly; tests
 # that don't care just monkeypatch ASSESSMENTS to a fresh dict and this store is never touched.
 assessment_store: AssessmentStore | None = None
+batch_store: BatchStore | None = None
 
 
 def get_store() -> accounts.AccountStore:
@@ -82,6 +84,13 @@ def get_assessment_store() -> AssessmentStore:
     return assessment_store
 
 
+def get_batch_store() -> BatchStore:
+    global batch_store
+    if batch_store is None:
+        batch_store = BatchStore(DATA_DIR / "batches.db")
+    return batch_store
+
+
 def _persist(a: Assessment) -> Assessment:
     """Write-through: called after every mutation to an Assessment already in ASSESSMENTS, so a
     restart can reload it. Persistence failing is never fatal to the request that triggered it --
@@ -99,6 +108,7 @@ def _persist(a: Assessment) -> Assessment:
 async def lifespan(_app: FastAPI):
     get_store()
     ASSESSMENTS.update(get_assessment_store().load_all())
+    BATCHES.update(get_batch_store().load_all())
     yield
 
 
@@ -502,6 +512,99 @@ def list_assessments(principal: Principal = Depends(require_role("viewer"))):
 @app.get("/assessments/{assessment_id}")
 def get_assessment(assessment_id: str, principal: Principal = Depends(require_role("viewer"))):
     return _get(assessment_id)
+
+
+# ---------------------------------------------------------------------------
+# Batches (FS-4): one named group of single-target Assessments created together from one
+# multi-target request. See orchestrator.create_batch's docstring for why each target still gets
+# its OWN Assessment rather than being merged into a shared one.
+# ---------------------------------------------------------------------------
+
+class CreateBatchReq(BaseModel):
+    name: str
+    request: str
+    targets: list[str]
+    scope: ScopeModel     # `scope.targets` is ignored -- each member gets exactly one target
+
+
+def _get_batch(batch_id: str) -> Batch:
+    b = BATCHES.get(batch_id)
+    if not b:
+        raise HTTPException(404, "batch not found")
+    return b
+
+
+def _batch_members(b: Batch) -> list[Assessment]:
+    return [ASSESSMENTS[aid] for aid in b.assessment_ids if aid in ASSESSMENTS]
+
+
+def _batch_summary(members: list[Assessment]) -> dict:
+    by_severity = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for a in members:
+        for f in a.findings:
+            by_severity[f.severity] += 1
+    return {"assessments": len(members),
+           "assessments_by_state": {s: sum(1 for a in members if a.state == s)
+                                     for s in sorted({a.state for a in members})},
+           "total_findings": sum(by_severity.values()), "findings_by_severity": by_severity}
+
+
+@app.post("/batches")
+def create_batch(body: CreateBatchReq, principal: Principal = Depends(require_role("analyst"))):
+    if not body.targets:
+        raise HTTPException(400, "at least one target is required")
+    try:
+        batch, members = orch.create_batch(body.name, body.request, body.targets, body.scope,
+                                           actor=principal.username)
+    except ScopeError as e:
+        raise HTTPException(400, str(e))
+    for a in members:
+        ASSESSMENTS[a.id] = a
+        _persist(a)
+    BATCHES[batch.id] = batch
+    try:
+        get_batch_store().save(batch)
+    except Exception:  # noqa: BLE001 - must never break the request that created the batch
+        logger.warning("failed to persist batch %s to disk", batch.id, exc_info=True)
+    return {"batch": batch, "assessments": [{"id": a.id, "target": a.scope.targets[0]} for a in members]}
+
+
+@app.get("/batches")
+def list_batches(principal: Principal = Depends(require_role("viewer"))):
+    return [{"id": b.id, "name": b.name, "created": b.created, "created_by": b.created_by,
+             "assessment_ids": b.assessment_ids, "summary": _batch_summary(_batch_members(b))}
+           for b in BATCHES.values()]
+
+
+@app.get("/batches/{batch_id}")
+def get_batch(batch_id: str, principal: Principal = Depends(require_role("viewer"))):
+    b = _get_batch(batch_id)
+    members = _batch_members(b)
+    return {"batch": b,
+           "assessments": [{"id": a.id, "target": a.scope.targets[0], "state": a.state,
+                            "findings": len(a.findings)} for a in members],
+           "summary": _batch_summary(members)}
+
+
+@app.get("/batches/{batch_id}/export.csv")
+def export_batch_csv(batch_id: str, principal: Principal = Depends(require_role("viewer"))):
+    """One row per correlated finding across every member assessment, with an extra
+    `assessment_id` column -- the FS-3 per-assessment export, concatenated across a batch."""
+    b = _get_batch(batch_id)
+    members = _batch_members(b)
+    buf = _io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=["assessment_id"] + CSV_FINDING_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for a in members:
+        for f in a.findings:
+            row = f.model_dump()
+            row["assessment_id"] = a.id
+            row["cve"] = ";".join(row.get("cve") or [])
+            row["source_tools"] = ";".join(row.get("source_tools") or [])
+            writer.writerow(row)
+    audit.append(principal.username, "export.generated", batch=batch_id, format="csv")
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=VAPT-batch-{batch_id}.csv"})
 
 
 @app.get("/assessments/{after_id}/diff/{before_id}")

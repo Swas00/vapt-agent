@@ -174,6 +174,36 @@ def test_analyse_without_history_is_unchanged_from_before_fs6(orch, assessment):
     assert all(not any("calibrated" in note.lower() for note in f.inference) for f in assessment.findings)
 
 
+def test_create_batch_makes_one_assessment_per_target(orch):
+    scope = ScopeModel(targets=["placeholder"], lab_attestation=True)
+    batch, members = orch.create_batch("sweep", "Assess the subnet.",
+                                       ["10.10.10.5", "10.10.10.6", "10.10.10.7"], scope)
+    assert len(members) == 3
+    assert batch.assessment_ids == [a.id for a in members]
+    assert [a.scope.targets for a in members] == [["10.10.10.5"], ["10.10.10.6"], ["10.10.10.7"]]
+    assert all(a.state == "planned" for a in members)
+    assert len({a.id for a in members}) == 3   # genuinely independent assessments
+
+
+def test_create_batch_skips_a_target_the_shared_scope_rejects_but_keeps_the_rest(orch):
+    """A public IP fails validate_scope's own-scope sanity check (allow_public defaults False) --
+    the same check a single-target orch.create() would raise ScopeError for. In a batch, one
+    target failing that check must not take down the other, valid targets."""
+    scope = ScopeModel(targets=["placeholder"], lab_attestation=True)
+    batch, members = orch.create_batch("sweep", "Assess the subnet.",
+                                       ["10.10.10.5", "8.8.8.8"], scope)
+    assert [a.scope.targets[0] for a in members] == ["10.10.10.5"]
+    entry = next(e for e in orch.audit.entries() if e["action"] == "batch.create")
+    assert entry["details"]["rejected_targets"]
+    assert "8.8.8.8" in entry["details"]["rejected_targets"][0]
+
+
+def test_create_batch_raises_when_every_target_is_rejected(orch):
+    scope = ScopeModel(targets=["placeholder"], lab_attestation=True)
+    with pytest.raises(ScopeError):
+        orch.create_batch("sweep", "Assess.", ["8.8.8.8"], scope)
+
+
 def test_scope_blocks_step_run_outside_target(orch, assessment):
     from vapt_agent.models import PlanStep
     bad = PlanStep(tool="nmap", target="8.8.8.8", preset="discovery", rationale="x")

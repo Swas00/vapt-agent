@@ -23,7 +23,7 @@ from vapt_agent import accounts, api
 from vapt_agent.audit import AuditLog
 from vapt_agent.models import ToolRun
 from vapt_agent.orchestrator import Orchestrator
-from vapt_agent.store import AssessmentStore
+from vapt_agent.store import AssessmentStore, BatchStore
 
 FIX = Path(__file__).parent / "fixtures"
 GOOD_PW = "correct-horse-battery-1"
@@ -40,6 +40,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "orch", Orchestrator(tmp_path, audit))
     monkeypatch.setattr(api, "ASSESSMENTS", {})
     monkeypatch.setattr(api, "assessment_store", AssessmentStore(tmp_path / "assessments.db"))
+    monkeypatch.setattr(api, "BATCHES", {})
+    monkeypatch.setattr(api, "batch_store", BatchStore(tmp_path / "batches.db"))
     store = accounts.AccountStore(tmp_path / "auth.db")
     store.create_user("alice", GOOD_PW, "analyst")
     store.create_user("bob", GOOD_PW, "lead")
@@ -756,6 +758,98 @@ def test_assessment_survives_a_simulated_restart(env):
     assert after["state"] == before["state"]
     assert after["findings"] == before["findings"]
     assert after["plan"] == before["plan"]
+
+
+# FS-4: multi-target batch assessment grouping.
+
+BATCH_BODY = {"name": "subnet sweep", "request": "Assess the lab subnet.",
+             "targets": ["10.10.10.5", "10.10.10.6"],
+             "scope": {"targets": ["placeholder"], "lab_attestation": True}}
+
+
+def test_create_batch_creates_one_assessment_per_target(env):
+    hdr = session(env, "alice")
+    r = env.client.post("/batches", json=BATCH_BODY, headers=hdr)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["assessments"]) == 2
+    targets = sorted(a["target"] for a in body["assessments"])
+    assert targets == ["10.10.10.5", "10.10.10.6"]
+    assert len(set(a["id"] for a in body["assessments"])) == 2
+    assert env.entries("batch.create")[0]["actor"] == "alice"
+
+
+def test_create_batch_requires_at_least_one_target(env):
+    hdr = session(env, "alice")
+    bad = {**BATCH_BODY, "targets": []}
+    r = env.client.post("/batches", json=bad, headers=hdr)
+    assert r.status_code == 400
+
+
+def test_create_batch_requires_analyst_role(env):
+    viewer_hdr = session(env, "victor")
+    r = env.client.post("/batches", json=BATCH_BODY, headers=viewer_hdr)
+    assert r.status_code == 403
+
+
+def test_get_batch_returns_aggregated_summary_across_members(env):
+    hdr = session(env, "bob")
+    created = env.client.post("/batches", json=BATCH_BODY, headers=hdr).json()
+    batch_id = created["batch"]["id"]
+    for member in created["assessments"]:
+        assert import_nessus(env, member["id"], hdr).status_code == 200
+        env.client.post(f"/assessments/{member['id']}/analyse", headers=hdr)
+
+    r = env.client.get(f"/batches/{batch_id}", headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["assessments"]) == 2
+    assert all(a["state"] == "analysed" for a in body["assessments"])
+    assert body["summary"]["assessments"] == 2
+    assert body["summary"]["total_findings"] == sum(a["findings"] for a in body["assessments"])
+    assert body["summary"]["total_findings"] > 0
+
+
+def test_list_batches_includes_the_summary(env):
+    hdr = session(env, "alice")
+    env.client.post("/batches", json=BATCH_BODY, headers=hdr)
+    r = env.client.get("/batches", headers=hdr)
+    assert r.status_code == 200
+    batches = r.json()
+    assert len(batches) == 1
+    assert batches[0]["summary"]["assessments"] == 2
+
+
+def test_get_batch_404_for_unknown_id(env):
+    hdr = session(env, "alice")
+    assert env.client.get("/batches/does-not-exist", headers=hdr).status_code == 404
+
+
+def test_export_batch_csv_has_one_row_per_finding_across_members(env):
+    """Each member keeps its own, independently correlated findings (scope filters on its own
+    single target) -- give each member a distinct synthetic finding directly, so the CSV export
+    is checked against two genuinely different per-assessment finding sets, not one fixture's
+    single host filtered down to only one in-scope member."""
+    import csv
+    import io
+
+    from vapt_agent import api as api_mod
+    from vapt_agent.models import Finding
+
+    hdr = session(env, "bob")
+    created = env.client.post("/batches", json=BATCH_BODY, headers=hdr).json()
+    batch_id = created["batch"]["id"]
+    for member in created["assessments"]:
+        a = api_mod.ASSESSMENTS[member["id"]]
+        a.findings = [Finding(title=f"finding on {member['target']}", asset=member["target"])]
+        api_mod._persist(a)
+
+    r = env.client.get(f"/batches/{batch_id}/export.csv", headers=hdr)
+    assert r.status_code == 200
+    assert f"VAPT-batch-{batch_id}.csv" in r.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(r.content.decode())))
+    assert len(rows) == 2
+    assert len({row["assessment_id"] for row in rows}) == 2
 
 
 # FS-6: confidence calibration against historical validation outcomes, wired through the real

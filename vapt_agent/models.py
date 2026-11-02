@@ -151,6 +151,20 @@ class Event(BaseModel):
     message: str
 
 
+class Batch(BaseModel):
+    """FS-4: a named grouping of several single-target Assessments created together from one
+    multi-target request. Deliberately NOT a container the targets' findings get merged into --
+    each target keeps its own independent Assessment (its own plan, scope check, audit trail), so
+    per-target state (one target's scan failing, one target getting a denied approval) stays
+    exactly as inspectable as it already is for a single-target assessment. A Batch is only an
+    index over assessment ids plus the aggregation the API computes on top of them."""
+    id: str = Field(default_factory=lambda: uid("batch-"))
+    created: str = Field(default_factory=now)
+    created_by: str = ""
+    name: str
+    assessment_ids: list[str] = Field(default_factory=list)
+
+
 class Assessment(BaseModel):
     id: str = Field(default_factory=lambda: uid("asm-"))
     created: str = Field(default_factory=now)

@@ -20,7 +20,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .models import Assessment, now
+from .models import Assessment, Batch, now
 
 
 class AssessmentStore:
@@ -72,3 +72,45 @@ class AssessmentStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+class BatchStore:
+    """Same write-through, one-JSON-blob-per-row approach as AssessmentStore, for FS-4's `Batch`
+    objects (a Batch is small -- a name and a list of assessment ids -- so there's no practical
+    cost to keeping it this simple rather than its own relational schema)."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS batches ("
+            " id TEXT PRIMARY KEY,"
+            " created_at TEXT NOT NULL,"
+            " updated_at TEXT NOT NULL,"
+            " data TEXT NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+
+    def save(self, b: Batch) -> None:
+        data = b.model_dump_json()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO batches (id, created_at, updated_at, data) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data",
+                (b.id, b.created, now(), data),
+            )
+            self._conn.commit()
+
+    def load_all(self) -> dict[str, Batch]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM batches ORDER BY created_at ASC"
+            ).fetchall()
+        out: dict[str, Batch] = {}
+        for (data,) in rows:
+            b = Batch.model_validate_json(data)
+            out[b.id] = b
+        return out
