@@ -504,9 +504,32 @@ def create_assessment(body: CreateReq, principal: Principal = Depends(require_ro
 
 
 @app.get("/assessments")
-def list_assessments(principal: Principal = Depends(require_role("viewer"))):
-    return [{"id": a.id, "state": a.state, "created": a.created, "created_by": a.created_by,
-             "request": a.request} for a in ASSESSMENTS.values()]
+def list_assessments(limit: int = 50, offset: int = 0, state: str | None = None,
+                     principal: Principal = Depends(require_role("viewer"))):
+    """A3: pagination + basic state filtering, so a deployment with many assessments (meaningful
+    now that FS-1 persists them across restarts, not just within one session) doesn't have to
+    return its entire history on every call. `limit`/`offset` apply AFTER `state` filtering, newest
+    first -- the order a UI actually wants ("show me the most recent N open ones"), not creation
+    order sliced blindly."""
+    if limit < 1 or limit > 500:
+        raise HTTPException(400, "limit must be between 1 and 500")
+    if offset < 0:
+        raise HTTPException(400, "offset must be >= 0")
+    # Newest first by actual creation/insertion order, not a string sort on `created` -- that
+    # timestamp only has second precision (models.now()), so several assessments created within
+    # the same second (routine in a test, or a batch) would tie, and sorting instead of just
+    # reversing insertion order would make `reverse=True`'s documented tie-break ("equal keys
+    # keep original relative order") silently put ties oldest-first within the tie, the opposite
+    # of what every other row already shows.
+    rows = list(reversed(ASSESSMENTS.values()))
+    if state is not None:
+        if state not in Assessment.model_fields["state"].annotation.__args__:
+            raise HTTPException(400, f"state must be one of {Assessment.model_fields['state'].annotation.__args__}")
+        rows = [a for a in rows if a.state == state]
+    page = rows[offset:offset + limit]
+    return {"total": len(rows), "limit": limit, "offset": offset,
+           "assessments": [{"id": a.id, "state": a.state, "created": a.created,
+                            "created_by": a.created_by, "request": a.request} for a in page]}
 
 
 @app.get("/assessments/{assessment_id}")

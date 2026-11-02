@@ -528,6 +528,51 @@ def test_create_records_the_verified_identity(env):
     assert env.entries("assessment.create")[0]["actor"] == "alice"
 
 
+# A3: pagination + basic state filtering on GET /assessments.
+
+def test_list_assessments_paginates_newest_first(env):
+    created = [create_assessment(env, "alice") for _ in range(3)]
+    hdr = session(env, "alice")
+    r = env.client.get("/assessments?limit=2&offset=0", headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 3
+    assert body["limit"] == 2 and body["offset"] == 0
+    assert [a["id"] for a in body["assessments"]] == [created[2]["id"], created[1]["id"]]
+
+    page2 = env.client.get("/assessments?limit=2&offset=2", headers=hdr).json()
+    assert [a["id"] for a in page2["assessments"]] == [created[0]["id"]]
+
+
+def test_list_assessments_filters_by_state(env):
+    a = create_assessment(env, "alice")
+    create_assessment(env, "alice")   # a second, left in 'planned'
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+
+    r = env.client.get("/assessments?state=analysed", headers=hdr)
+    body = r.json()
+    assert body["total"] == 1
+    assert body["assessments"][0]["id"] == a["id"]
+
+    r = env.client.get("/assessments?state=planned", headers=hdr)
+    assert r.json()["total"] == 1
+
+
+def test_list_assessments_rejects_an_invalid_state(env):
+    hdr = session(env, "alice")
+    r = env.client.get("/assessments?state=not-a-real-state", headers=hdr)
+    assert r.status_code == 400
+
+
+def test_list_assessments_rejects_an_out_of_range_limit(env):
+    hdr = session(env, "alice")
+    assert env.client.get("/assessments?limit=0", headers=hdr).status_code == 400
+    assert env.client.get("/assessments?limit=501", headers=hdr).status_code == 400
+    assert env.client.get("/assessments?offset=-1", headers=hdr).status_code == 400
+
+
 def test_import_and_report_are_attributed(env):
     a = create_assessment(env, "bob")
     hdr = session(env, "bob")
