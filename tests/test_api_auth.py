@@ -569,6 +569,7 @@ def test_event_stream_replays_existing_events_then_stops(env):
     assert r.headers["content-type"].startswith("text/event-stream")
     assert "Assessment created by alice" in r.text
     assert r.text.count("data: ") == len(a["events"])
+    assert "id: 0\ndata:" in r.text          # indexed so a client can skip an already-known replay
 
 
 def test_event_stream_without_a_session_is_401(env):

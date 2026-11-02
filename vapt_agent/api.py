@@ -477,8 +477,11 @@ EVENT_STREAM_POLL_SECONDS = 1.0
 _DEFAULT_STREAM_SECONDS = 3600.0   # ~1h; EventSource reconnects on its own once a stream ends
 
 
-def _sse(event) -> str:
-    return f"data: {_json.dumps(event.model_dump())}\n\n"
+def _sse(event, idx: int) -> str:
+    # The id: line lets a client that already rendered the first N events (e.g. from the
+    # assessment's own create response) recognize the stream's initial replay of those same
+    # events and skip them, rather than rendering every one of them twice.
+    return f"id: {idx}\ndata: {_json.dumps(event.model_dump())}\n\n"
 
 
 @app.get("/assessments/{assessment_id}/stream")
@@ -497,17 +500,16 @@ async def stream_events(assessment_id: str, request: Request, max_seconds: float
     a = _get(assessment_id)
 
     async def gen():
-        sent = 0
-        for e in a.events:
-            yield _sse(e)
+        for i, e in enumerate(a.events):
+            yield _sse(e, i)
         sent = len(a.events)
         elapsed = 0.0
         while elapsed < max_seconds:
             if await request.is_disconnected():
                 return
             if len(a.events) > sent:
-                for e in a.events[sent:]:
-                    yield _sse(e)
+                for i in range(sent, len(a.events)):
+                    yield _sse(a.events[i], i)
                 sent = len(a.events)
             await asyncio.sleep(EVENT_STREAM_POLL_SECONDS)
             elapsed += EVENT_STREAM_POLL_SECONDS
