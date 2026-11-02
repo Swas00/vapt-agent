@@ -139,7 +139,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [x] A6. Retest workflow *(done — HP-6: `vapt_agent/diff.py`, `GET /assessments/{after}/diff/{before}`, UI compare card)*
 - [x] A7. Remediation status lifecycle on `Finding` *(done — HP-7)*
 - [x] A8. Multi-target batch assessments *(done — FS-4: `Batch` model, `orchestrator.create_batch()`, `POST /batches`, `GET /batches/{id}` aggregated summary)*
-- [ ] A9. Explicit "mark finding as false positive" analyst action (today it's inferred, not analyst-confirmable)
+- [x] A9. Explicit "mark finding as false positive" analyst action *(done — `Finding.analyst_marked_false_positive`, `models.is_false_positive()` is the single predicate risk.py/planner.py/report.py all check; `POST /assessments/{id}/findings/{id}/false-positive`)*
 - [x] A10. Persist `Assessment` objects to disk so a server restart during a demo doesn't lose state *(done — FS-1: `vapt_agent/store.py`'s `AssessmentStore`, SQLite)*
 
 ### B. Security and Privacy
@@ -149,8 +149,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [x] B4. Rate limiting on scan-triggering and Metasploit-execution endpoints specifically *(done — HP-1)*
 - [x] B5. Security response headers *(done — HP-2)*
 - [x] B6. `SECURITY.md` documenting the threat model *(done — committed; states explicitly that scan output is attacker-adjacent and treated as data at every layer)*
-- [ ] B7. Secrets handling audit: confirm `ANTHROPIC_API_KEY` / future tokens are never logged (spot-checked: `llm.py`/`reasoning.py` never print the key; good, but add an explicit test)
-- [ ] B8. CSRF consideration *if* B1 adds cookie-based sessions (token-header auth sidesteps this; flag only if session cookies are chosen)
+- [x] B7. Secrets handling audit: confirm `ANTHROPIC_API_KEY` / future tokens are never logged *(done — `_scrub_secret()` in `llm.py`/`reasoning.py` redacts the key out of any logged exception text, with a test proving it even when the exception message contains the key verbatim)*
+- [x] B8. CSRF consideration *if* B1 adds cookie-based sessions *(the condition fired — CR-1's real-accounts rework added cookie-based web sessions; done: double-submit CSRF token + SameSite=Strict + same-origin check, documented in SECURITY.md's "Authentication and authorization" section)*
 - [x] B9. Verify the `Metasploit.MODULE_RE` regex (already tested against `rm -rf /; echo pwned`) also rejects path traversal / null bytes in the module string *(done — `tests/test_metasploit_live_wiring.py`, parametrized over traversal/null-byte/upper-case/newline variants)*
 - [x] B10. Add a `/healthz` endpoint that does *not* leak environment/version info *(done — PL-6; returns only `{"status": "ok"}`)*
 
@@ -175,18 +175,18 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [x] E1. Convert `run_step` to `BackgroundTasks` + a `GET /assessments/{id}/runs/{run_id}` status-poll endpoint *(done — CR-3; `execute_approval`/Metasploit deliberately left synchronous, see §8)*
 - [x] E2. Structured application logging (Python `logging`, not bare prints) *(done — PL-7; no per-request IDs added, see §2.3-equivalent note: not needed at this scale)*
 - [ ] E3. `FastAPI` dependency-injected config object instead of module-level globals (`DATA_DIR`, `audit`, `orch`) — easier to test in isolation
-- [ ] E4. Add `TestClient`-based API tests (see Testing section) — this is both an architecture and QA item
+- [x] E4. Add `TestClient`-based API tests *(done — CR-1/CR-5, grown substantially since: `tests/test_api_auth.py` now has 70+ HTTP-level tests)*
 - [x] E5. Document a real deployment story (systemd unit / Docker) *(done — FS-5: `Dockerfile`, `docker-compose.yml`, `deploy/vapt-agent.service`, `docs/DEPLOYMENT.md`)*
 - [x] E6. Basic backup story for `data/audit.log` *(done — FS-5: `deploy/backup_data.sh` + the no-logrotate warning in `docs/DEPLOYMENT.md`)*
 
 ### F. Testing and Reliability
 - [x] F1. FastAPI `TestClient` coverage of create → import → analyse → approve → execute → report through real HTTP *(done — CR-5, landed in `tests/test_api_auth.py` rather than a separate `test_api.py`)*
-- [ ] F2. Negative-path API tests: malformed JSON body, missing required field, wrong content-type on upload, oversized upload (once B2 lands)
+- [x] F2. Negative-path API tests *(done — malformed JSON body, missing/wrong-typed field, missing upload file, unregistered-tool import, bad query params; oversized upload was already covered)*
 - [x] F3. Auth tests once B1 lands *(done — `tests/test_accounts.py`, `tests/test_api_auth.py`)*: unauthenticated request rejected, wrong credentials rejected, `by`/`decided_by` reflects the authenticated identity not a client-supplied string
-- [ ] F4. Concurrency test: two simultaneous `run_step` calls on the same assessment don't corrupt `a.plan`/`a.runs` (today nothing guards against a race; low risk at hackathon scale, real at production scale)
+- [x] F4. Concurrency test: two simultaneous `run_step` calls on the same assessment don't corrupt `a.plan`/`a.runs` *(done — and this surfaced a genuine race: `start_step`'s status check ran BEFORE the lock, not inside it; fixed, 8-thread regression test proves exactly one caller wins)*
 - [ ] F5. Accessibility test pass (axe-core or manual) once C1–C2 land
-- [ ] F6. Load/perf sanity: confirm report generation stays fast with 100+ findings (currently only tested with the ~14-finding fixture set)
-- [ ] F7. Boundary tests for `risk.score()`: confidence exactly 0 and 1, CVSS exactly 0 and 10, an asset with no `asset_criticality` entry at all
+- [x] F6. Load/perf sanity: confirm report generation stays fast with 100+ findings *(done — 120-finding test, asserts well under 10s)*
+- [x] F7. Boundary tests for `risk.score()` *(done — confidence 0/1, CVSS 0/10, no `asset_criticality` entry at all)*
 
 ---
 
