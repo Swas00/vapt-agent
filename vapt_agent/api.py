@@ -631,9 +631,16 @@ def report(assessment_id: str, principal: Principal = Depends(require_role("anal
 
 
 @app.get("/audit")
-def get_audit(principal: Principal = Depends(require_role("viewer"))):
+def get_audit(assessment_id: str | None = None, principal: Principal = Depends(require_role("viewer"))):
+    """`assessment_id` narrows the returned entries to one assessment -- for the audit-trail
+    replay view (CA-2): "what did the agent decide, and why" for a single assessment, without
+    the rest of the server's traffic in the way. The hash-chain is always verified against the
+    *full* log regardless of the filter, since that's what the chain actually protects."""
     ok, msg = audit.verify()
-    return {"ok": ok, "message": msg, "entries": audit.entries()}
+    entries = audit.entries()
+    if assessment_id:
+        entries = [e for e in entries if e.get("details", {}).get("assessment") == assessment_id]
+    return {"ok": ok, "message": msg, "entries": entries}
 
 
 @app.get("/integration-matrix")

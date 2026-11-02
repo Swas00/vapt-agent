@@ -310,6 +310,20 @@ def test_analyst_can_request_but_not_decide_or_execute_approval(env):
     assert ok, msg
 
 
+def test_audit_filter_by_assessment_scopes_entries_but_not_chain_verification(env):
+    a1 = create_assessment(env, "alice")
+    a2 = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+
+    full = env.client.get("/audit", headers=hdr).json()
+    scoped = env.client.get(f"/audit?assessment_id={a1['id']}", headers=hdr).json()
+
+    assert scoped["ok"] is True and scoped["message"] == full["message"]    # same chain, not re-verified narrower
+    assert len(scoped["entries"]) < len(full["entries"])
+    assert all(e["details"].get("assessment") == a1["id"] for e in scoped["entries"])
+    assert any(e["details"].get("assessment") == a2["id"] for e in full["entries"])
+
+
 def test_viewer_can_read_but_not_create(env):
     a = create_assessment(env, "alice")
     viewer_hdr = session(env, "victor")
