@@ -819,6 +819,17 @@ const rejectStep = entry(async (stepId, btn) => {
   }
 });
 
+const setRemediation = entry(async (findingId, status, el) => {
+  if (el) el.disabled = true;
+  try {
+    await api(`/assessments/${currentId}/findings/${findingId}/remediation?status=${encodeURIComponent(status)}`,
+             {method:'POST'});
+    await refresh();
+  } finally {
+    if (el && el.isConnected) el.disabled = false;
+  }
+});
+
 const requestApproval = entry(async (findingId, btn) => {
   // Built here, from the current in-memory finding, rather than threaded through an inline
   // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
@@ -912,6 +923,17 @@ function render(){
        confidence=${esc(f.confidence)} risk=${esc(f.risk_score)} tools=${esc((f.source_tools||[]).join(','))}</div>
       ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${esc(refs.join(', '))}</div>` : ''}
       ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#e8b465">ATT&amp;CK (indicative): ${esc(f.mitre_attack.join('; '))}</div>` : ''}
+      <div class="row" style="margin-top:6px">
+        <label class="mono" style="margin:0" for="remediation-${esc(f.id)}">Remediation:</label>
+        ${currentRole === 'viewer'
+          ? `<span class="pill sev-info">${esc(f.remediation_status)}</span>`
+          : `<select id="remediation-${esc(f.id)}" style="width:auto;padding:4px 8px"
+               onchange="setRemediation('${esc(f.id)}', this.value, this)">
+               ${['open','in_progress','fixed','retested'].map(s =>
+                 `<option value="${s}" ${s === f.remediation_status ? 'selected' : ''}>${s}</option>`).join('')}
+             </select>`}
+        ${f.remediation_updated_by ? `<span class="mono" style="opacity:.7">by ${esc(f.remediation_updated_by)}</span>` : ''}
+      </div>
       ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' && currentRole !== 'viewer' ?
         `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}',this)">Request active-validation approval</button>` : ''}
     </div>`;

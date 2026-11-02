@@ -576,6 +576,50 @@ test('the approval request button passes only the finding id, never scanner text
   assert.equal(body.action, `Human-approved check-mode validation of it's "bad" on 10.10.10.5`);
 });
 
+test('changing a finding\'s remediation select posts the new status', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'open', remediation_updated_by: '' };
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (opts.method === 'POST' && /\/remediation\?status=fixed$/.test(url)) return { body: {} };
+      return { body: assessment({ findings: [f] }) };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  const select = ui.$('#findings select');
+  assert.ok(select, 'a remediation select is rendered for a non-viewer role');
+  select.value = 'fixed';
+  select.dispatchEvent(new ui.w.Event('change'));
+  await settle();
+
+  assert.ok(ui.calls.some((c) => /\/assessments\/asm-1\/findings\/raw-1\/remediation\?status=fixed$/.test(c.url)
+                               && c.opts.method === 'POST'));
+});
+
+test('a viewer sees the remediation status as read-only text, not a select', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'in_progress', remediation_updated_by: 'bob' };
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('victor', 'viewer') } : { body: assessment({ findings: [f] }) },
+  });
+  await settle();
+  await signIn(ui, 'victor');
+  ui.$('#createBtn').click();
+  await settle();
+
+  assert.equal(ui.$('#findings select'), null);
+  assert.match(ui.$('#findings').innerHTML, /in_progress/);
+});
+
 // ---- motion system ------------------------------------------------------------------------------
 
 test('static app buttons are bound for motion at load', async () => {
