@@ -80,6 +80,17 @@
   .step-rationale { color:var(--muted); font-size:12.5px; margin-top:4px; }
   .finding-title { font-weight:600; }
 
+  /* ---- Error toasts: non-blocking, stack in the corner, auto-dismiss -- replaces alert(), which
+     blocks the JS thread and is a poor screen-reader experience. ---- */
+  .toast-stack { position:fixed; top:16px; right:16px; z-index:10000; display:flex;
+                 flex-direction:column; gap:8px; max-width:360px; }
+  .toast { background:var(--panel); border:1px solid var(--crit); color:var(--text); border-radius:8px;
+           padding:10px 32px 10px 12px; font-size:12.5px; position:relative;
+           box-shadow:0 10px 24px -10px rgba(0,0,0,.5); animation:app-fade-in .25s cubic-bezier(.16,1,.3,1) both; }
+  .toast-close { position:absolute; top:6px; right:6px; width:20px; height:20px; padding:0; line-height:18px;
+                 background:transparent; color:var(--muted); font-size:14px; font-weight:700; box-shadow:none; }
+  .toast-close:hover { background:rgba(249,115,22,.15); color:var(--text); box-shadow:none; }
+
   /* ---- Custom cursor: a tight dot plus a lagging ring (eased toward the pointer every frame in
      JS), swapped for the native cursor only on fine-pointer, motion-ok devices -- touch and
      prefers-reduced-motion both get the plain system cursor, untouched. ---- */
@@ -392,6 +403,7 @@ void main(void){
   })();
 </script>
 <div id="app">
+<div id="toastStack" class="toast-stack" aria-live="polite"></div>
 <header>
   <h1>🛡️ VAPT Agent</h1>
   <span>Scope-bound, evidence-driven, human-in-the-loop assessment assistant — lab-only</span>
@@ -598,6 +610,23 @@ $('#pwChangeBtn').onclick = entry(async () => {
   applyAuthState(await who.json());
 });
 
+// Non-blocking error display -- replaces alert(), which freezes the JS thread and is a poor
+// screen-reader experience. textContent only: an error body is server/system text, not markup.
+function showError(message) {
+  const stack = document.getElementById('toastStack');
+  if (!stack) return;
+  const el = document.createElement('div');
+  el.className = 'toast'; el.setAttribute('role', 'alert');
+  el.textContent = String(message).slice(0, 500);
+  const close = document.createElement('button');
+  close.type = 'button'; close.className = 'toast-close'; close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '×';
+  close.onclick = () => el.remove();
+  el.appendChild(close);
+  stack.appendChild(el);
+  setTimeout(() => el.remove(), 8000);
+}
+
 async function api(path, opts={}) {
   const res = await fetch(path, { ...opts, credentials: 'same-origin',
     headers: authHeaders({'Content-Type':'application/json', ...(opts.headers||{})}) });
@@ -607,7 +636,7 @@ async function api(path, opts={}) {
     if (who.ok) applyAuthState(await who.json());
     throw new HandledError('password change required');
   }
-  if (!res.ok) { alert(await res.text()); throw new HandledError('request failed'); }
+  if (!res.ok) { showError(await res.text()); throw new HandledError('request failed'); }
   return res.json();
 }
 
@@ -694,7 +723,7 @@ $('#reportBtn').onclick = entry(async () => {
   const res = await fetch(`/assessments/${currentId}/report`,
                           { method:'POST', credentials:'same-origin', headers: authHeaders() });
   if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); return; }
-  if (!res.ok) return alert(await res.text());
+  if (!res.ok) return showError(await res.text());
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement('a');
   link.href = url; link.download = `VAPT-${currentId}.pdf`;
@@ -703,14 +732,14 @@ $('#reportBtn').onclick = entry(async () => {
 });
 
 $('#importBtn').onclick = entry(async () => {
-  if(!currentId) return alert('Start an assessment first');
+  if(!currentId) return showError('Start an assessment first');
   const f = $('#importFile').files[0];
-  if(!f) return alert('Choose a file');
+  if(!f) return showError('Choose a file');
   const fd = new FormData(); fd.append('file', f);
   const res = await fetch(`/assessments/${currentId}/import/${$('#importTool').value}`,
                           {method:'POST', credentials:'same-origin', body: fd, headers: authHeaders()});
   if (res.status === 401) { setSignedOut('Session expired -- sign in again.'); return; }
-  if(!res.ok) return alert(await res.text());
+  if(!res.ok) return showError(await res.text());
   await refresh();
 });
 

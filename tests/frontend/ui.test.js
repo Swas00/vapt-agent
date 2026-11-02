@@ -280,6 +280,31 @@ test('a 403 with the password-change-required header re-fetches whoami and shows
   assert.equal(ui.alerts.length, 0);               // handled quietly, not a raw alert
 });
 
+test('a failed request shows a dismissible toast instead of a blocking alert()', async () => {
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (url === '/assessments' && opts.method === 'POST') return { body: assessment() };
+      if (url === '/assessments/asm-1/analyse') return { status: 400, body: { detail: 'not ready yet' } };
+      return { body: assessment() };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#analyseBtn').click();
+  await settle();
+
+  assert.equal(ui.alerts.length, 0, 'no blocking alert() was called');
+  const toast = ui.$('#toastStack .toast');
+  assert.ok(toast, 'an error toast was rendered');
+  assert.ok(toast.textContent.includes('not ready yet'));
+
+  toast.querySelector('.toast-close').click();
+  assert.equal(ui.$('#toastStack').children.length, 0, 'dismiss button removes the toast');
+});
+
 test('signing out clears state and shows the login form again', async () => {
   const ui = boot({
     respond: (url) => url === '/login' ? { body: whoami('alice', 'analyst') } : { body: {} },
