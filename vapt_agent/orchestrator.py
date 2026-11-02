@@ -10,7 +10,7 @@ from . import correlate, frameworks, planner, risk
 from .adapters import registry
 from .adapters.infra import Metasploit
 from .audit import AuditLog
-from .models import Approval, Assessment, Event, PlanStep, ScopeModel, ToolRun
+from .models import Approval, Assessment, Event, Finding, PlanStep, ScopeModel, ToolRun
 from .scope import check as scope_check
 from .scope import validate_scope
 
@@ -210,6 +210,14 @@ class Orchestrator:
                                   message=f"Suggests requesting human-approved active validation for "
                                           f"finding {prop['finding_id']}: {prop['rationale']}"))
         return a
+
+    # ---- remediation lifecycle (analyst-set only, never inferred) --------
+    def set_remediation_status(self, a: Assessment, finding_id: str, status: str, by: str) -> Finding:
+        f = next(x for x in a.findings if x.id == finding_id)
+        from .models import now
+        f.remediation_status, f.remediation_updated_by, f.remediation_updated_at = status, by, now()
+        self.audit.append(by, "finding.remediation_updated", assessment=a.id, finding=finding_id, status=status)
+        return f
 
     # ---- human-in-the-loop approval for active validation ---------------
     def request_approval(self, a: Assessment, finding_id: str, action: str, module: str = "",

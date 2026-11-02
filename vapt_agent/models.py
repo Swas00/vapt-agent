@@ -83,6 +83,11 @@ class Finding(BaseModel):
     risk_score: Optional[float] = None
     priority: Optional[str] = None
     risk_breakdown: dict = Field(default_factory=dict)
+    # remediation lifecycle -- analyst-set only, never inferred; tracked separately from
+    # validation_status (which is about whether the finding itself is real, not whether it's fixed)
+    remediation_status: Literal["open", "in_progress", "fixed", "retested"] = "open"
+    remediation_updated_by: str = ""
+    remediation_updated_at: str = ""
 
 
 class ToolRun(BaseModel):

@@ -532,6 +532,21 @@ class ApprovalReq(BaseModel):
     module: str = ""
 
 
+_REMEDIATION_STATUSES = {"open", "in_progress", "fixed", "retested"}
+
+
+@app.post("/assessments/{assessment_id}/findings/{finding_id}/remediation")
+def set_remediation_status(assessment_id: str, finding_id: str, status: str,
+                           principal: Principal = Depends(require_role("analyst"))):
+    if status not in _REMEDIATION_STATUSES:
+        raise HTTPException(400, f"status must be one of {sorted(_REMEDIATION_STATUSES)}")
+    a = _get(assessment_id)
+    try:
+        return orch.set_remediation_status(a, finding_id, status, principal.username)
+    except StopIteration:
+        raise HTTPException(404, "finding not found")
+
+
 @app.post("/assessments/{assessment_id}/approvals")
 def request_approval(assessment_id: str, body: ApprovalReq,
                      principal: Principal = Depends(require_role("analyst"))):

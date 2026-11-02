@@ -165,7 +165,8 @@ def _finding_block(f: Finding, ss) -> list:
     meta = (f"Finding ID: {_esc(f.id)} &nbsp;|&nbsp; Asset: {_esc(f.asset)}" +
             (f":{f.port}/{_esc(f.proto)}" if f.port else "") +
             f" &nbsp;|&nbsp; Status: {_esc(f.status)} &nbsp;|&nbsp; Validation: {_esc(f.validation_status)} "
-            f"&nbsp;|&nbsp; Confidence: {f.confidence:.2f}")
+            f"&nbsp;|&nbsp; Confidence: {f.confidence:.2f} "
+            f"&nbsp;|&nbsp; Remediation: {_esc(f.remediation_status)}")
     out.append(Paragraph(meta, ss["Small"]))
     if f.cvss is not None:
         est = " (estimated from severity band, not tool-reported)" if f.cvss_estimated else ""
@@ -293,9 +294,14 @@ def generate(a: Assessment, out_path: Path) -> Path:
             story.append(Paragraph(f"<b>{_esc(f.title)}</b> ({_esc(f.asset)}" +
                                    (f":{f.port}" if f.port else "") + ")", ss["Body"]))
             story.append(Paragraph(impact_statement(f), ss["Small"]))
-            story.append(Paragraph(f"<b>Remediation:</b> {_esc(f.solution) or 'See detailed finding above.'}",
+            story.append(Paragraph(f"<b>Remediation:</b> {_esc(f.solution) or 'See detailed finding above.'} "
+                                   f"(status: {_esc(f.remediation_status)})",
                                    ss["Small"]))
             story.append(Spacer(1, 4))
+        remediated = sum(1 for f in a.findings if f.remediation_status in ("fixed", "retested"))
+        story.append(Paragraph(
+            f"Remediation progress across all {len(a.findings)} finding(s): {remediated} marked "
+            f"fixed/retested, {len(a.findings) - remediated} still open or in progress.", ss["Small"]))
     else:
         story.append(Paragraph("No critical or high severity findings were identified in this assessment.",
                                ss["Body"]))

@@ -126,6 +126,19 @@ def test_generate_produces_a_valid_pdf_with_no_findings(tmp_path):
     assert out.stat().st_size > 500
 
 
+def test_generate_includes_remediation_status_and_progress_summary(tmp_path):
+    scope = _scope()
+    fixed = Finding(title="a", asset="10.10.10.5", severity="critical", confidence=0.9,
+                    source_tools=["nmap"], remediation_status="fixed", remediation_updated_by="bob")
+    open_ = Finding(title="b", asset="10.10.10.5", severity="high", confidence=0.5,
+                    source_tools=["nikto"])   # default remediation_status="open"
+    score(fixed, scope); score(open_, scope)
+    a = Assessment(request="retest", scope=scope)
+    a.findings = [fixed, open_]
+    out = generate(a, tmp_path / "remediation.pdf")
+    assert out.exists() and out.read_bytes()[:5] == b"%PDF-"
+
+
 def test_generate_handles_ampersand_and_markup_in_free_text_without_crashing(tmp_path):
     scope = _scope()
     f = Finding(title="R&D <admin> panel exposed", asset="10.10.10.5", severity="high",

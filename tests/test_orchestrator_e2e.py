@@ -92,6 +92,20 @@ def test_full_pipeline_to_report(orch, assessment, tmp_path):
     assert ok, msg
 
 
+def test_set_remediation_status_records_who_and_when(orch, assessment):
+    orch.import_result(assessment, "nessus", FIX / "nessus_sample.nessus")
+    orch.analyse(assessment)
+    f = assessment.findings[0]
+    assert f.remediation_status == "open"            # the default, nothing inferred
+
+    updated = orch.set_remediation_status(assessment, f.id, "fixed", by="bob")
+    assert updated.remediation_status == "fixed"
+    assert updated.remediation_updated_by == "bob"
+    assert updated.remediation_updated_at
+    entry = next(e for e in orch.audit.entries() if e["action"] == "finding.remediation_updated")
+    assert entry["actor"] == "bob" and entry["details"]["status"] == "fixed"
+
+
 def test_metasploit_execution_requires_approved_state(orch, assessment, tmp_path):
     orch.import_result(assessment, "nessus", FIX / "nessus_sample.nessus")
     orch.analyse(assessment)

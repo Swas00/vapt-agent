@@ -348,6 +348,62 @@ def test_diff_endpoint_404s_on_unknown_assessment(env):
     assert env.client.get(f"/assessments/does-not-exist/diff/{a1['id']}", headers=hdr).status_code == 404
 
 
+def test_remediation_status_set_by_analyst_persists_and_is_attributed(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+    assert finding["remediation_status"] == "open"
+
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/remediation?status=fixed",
+                        headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["remediation_status"] == "fixed" and body["remediation_updated_by"] == "alice"
+
+    refreshed = next(f for f in env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"]
+                     if f["id"] == finding["id"])
+    assert refreshed["remediation_status"] == "fixed"
+    assert env.entries("finding.remediation_updated")[0]["actor"] == "alice"
+
+
+def test_remediation_status_rejects_an_invalid_value(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/remediation?status=bogus",
+                        headers=hdr)
+    assert r.status_code == 400
+
+
+def test_remediation_status_404s_on_unknown_finding(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+
+    r = env.client.post(f"/assessments/{a['id']}/findings/no-such-finding/remediation?status=fixed",
+                        headers=hdr)
+    assert r.status_code == 404
+
+
+def test_viewer_cannot_set_remediation_status(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+
+    viewer_hdr = session(env, "victor")
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/remediation?status=fixed",
+                        headers=viewer_hdr)
+    assert r.status_code == 403
+
+
 def test_admin_routes_require_admin_role(env):
     alice_hdr = session(env, "alice")
     r = env.client.post("/admin/users", json={"username": "x", "password": GOOD_PW, "role": "viewer"},
