@@ -100,6 +100,14 @@ test('a returning session (valid cookie) is restored from /whoami alone, no form
   assert.match(ui.$('#whoami').textContent, /alice \(analyst\)/);
 });
 
+test('the activity log is an ARIA live region (PL-1), announced to screen readers as it updates', async () => {
+  const ui = boot();
+  await settle();
+  const events = ui.$('#events');
+  assert.equal(events.getAttribute('aria-live'), 'polite');
+  assert.equal(events.getAttribute('role'), 'log');
+});
+
 test('submitting without both fields does not call the server', async () => {
   const ui = boot();
   await settle();
