@@ -84,9 +84,9 @@ def impact_statement(f: Finding) -> str:
     tech_phrase = EXPOSURE_IMPACT_TEXT.get(expo_class, EXPOSURE_IMPACT_TEXT["other"])
     vector_clause = describe_cvss_vector(f.cvss_vector)
 
+    crit_source = "set by the analyst" if crit_set_by == "analyst" else "the scope default, not analyst-confirmed"
     business = (f"<b>Business impact:</b> {_esc(f.asset)} is treated as {crit}-criticality "
-               f"({'set by the analyst' if crit_set_by == 'analyst' else 'the scope default, not '
-                'analyst-confirmed'}) in this assessment's scope. {_status_clause(f)}")
+               f"({crit_source}) in this assessment's scope. {_status_clause(f)}")
     technical = (f"<b>Technical impact:</b> if exploited, this finding could allow "
                 f"{tech_phrase}" + (f", {_esc(vector_clause)}." if vector_clause else "."))
     return business + " " + technical
