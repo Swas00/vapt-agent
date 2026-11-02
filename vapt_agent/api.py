@@ -41,6 +41,7 @@ from .audit import AuditLog
 from .models import Assessment, ScopeModel
 from .orchestrator import Orchestrator, ScopeError
 from .report import generate as generate_report
+from .store import AssessmentStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -58,6 +59,11 @@ ASSESSMENTS: dict[str, Assessment] = {}
 # creates data/auth.db or a bootstrap admin on disk. Tests construct their own AccountStore.
 account_store: accounts.AccountStore | None = None
 
+# FS-1: same lazy-construction rule as account_store -- importing this module for a test must
+# never create data/assessments.db. Tests that want persistence monkeypatch this directly; tests
+# that don't care just monkeypatch ASSESSMENTS to a fresh dict and this store is never touched.
+assessment_store: AssessmentStore | None = None
+
 
 def get_store() -> accounts.AccountStore:
     global account_store
@@ -69,9 +75,30 @@ def get_store() -> accounts.AccountStore:
     return account_store
 
 
+def get_assessment_store() -> AssessmentStore:
+    global assessment_store
+    if assessment_store is None:
+        assessment_store = AssessmentStore(DATA_DIR / "assessments.db")
+    return assessment_store
+
+
+def _persist(a: Assessment) -> Assessment:
+    """Write-through: called after every mutation to an Assessment already in ASSESSMENTS, so a
+    restart can reload it. Persistence failing is never fatal to the request that triggered it --
+    the in-memory state (what the response and the rest of this process session see) is already
+    correct either way; a persistence failure only risks that one change not surviving a restart,
+    which is logged so it isn't silent."""
+    try:
+        get_assessment_store().save(a)
+    except Exception:  # noqa: BLE001 - must never break the request that triggered this save
+        logger.warning("failed to persist assessment %s to disk", a.id, exc_info=True)
+    return a
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_store()
+    ASSESSMENTS.update(get_assessment_store().load_all())
     yield
 
 
@@ -463,7 +490,7 @@ def create_assessment(body: CreateReq, principal: Principal = Depends(require_ro
     except ScopeError as e:
         raise HTTPException(400, str(e))
     ASSESSMENTS[a.id] = a
-    return a
+    return _persist(a)
 
 
 @app.get("/assessments")
@@ -535,7 +562,9 @@ async def stream_events(assessment_id: str, request: Request, max_seconds: float
 def decide_step(assessment_id: str, step_id: str, approved: bool,
                 principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
-    return orch.approve_step(a, step_id, approved, principal.username)
+    step = orch.approve_step(a, step_id, approved, principal.username)
+    _persist(a)
+    return step
 
 
 @app.post("/assessments/{assessment_id}/plan/{step_id}/run")
@@ -550,7 +579,13 @@ def run_step(assessment_id: str, step_id: str, background_tasks: BackgroundTasks
         run = orch.start_step(a, step_id, actor=principal.username)
     except ScopeError as e:
         raise HTTPException(400, str(e))
-    background_tasks.add_task(orch.finish_step, a, step_id, run.id, principal.username)
+    _persist(a)
+
+    def _finish_and_persist():
+        orch.finish_step(a, step_id, run.id, principal.username)
+        _persist(a)
+
+    background_tasks.add_task(_finish_and_persist)
     return run
 
 
@@ -572,17 +607,21 @@ async def import_result(assessment_id: str, tool: str, file: UploadFile = File(.
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
     try:
-        return orch.import_result(a, tool, dest, actor=principal.username)
+        run = orch.import_result(a, tool, dest, actor=principal.username)
     except ScopeError as e:
         raise HTTPException(400, str(e))
     except (_ET.ParseError, _json.JSONDecodeError) as e:
         raise HTTPException(400, f"could not parse this as a {tool} import: {e}")
+    _persist(a)
+    return run
 
 
 @app.post("/assessments/{assessment_id}/analyse")
 def analyse(assessment_id: str, principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
-    return orch.analyse(a)
+    result = orch.analyse(a)
+    _persist(a)
+    return result
 
 
 class ApprovalReq(BaseModel):
@@ -601,24 +640,30 @@ def set_remediation_status(assessment_id: str, finding_id: str, status: str,
         raise HTTPException(400, f"status must be one of {sorted(_REMEDIATION_STATUSES)}")
     a = _get(assessment_id)
     try:
-        return orch.set_remediation_status(a, finding_id, status, principal.username)
+        f = orch.set_remediation_status(a, finding_id, status, principal.username)
     except StopIteration:
         raise HTTPException(404, "finding not found")
+    _persist(a)
+    return f
 
 
 @app.post("/assessments/{assessment_id}/approvals")
 def request_approval(assessment_id: str, body: ApprovalReq,
                      principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
-    return orch.request_approval(a, body.finding_id, body.action, body.module,
+    appr = orch.request_approval(a, body.finding_id, body.action, body.module,
                                  requested_by=principal.username)
+    _persist(a)
+    return appr
 
 
 @app.post("/assessments/{assessment_id}/approvals/{approval_id}/decision")
 def decide_approval(assessment_id: str, approval_id: str, approved: bool, reason: str = "",
                     principal: Principal = Depends(require_role("lead"))):
     a = _get(assessment_id)
-    return orch.decide_approval(a, approval_id, approved, principal.username, reason)
+    appr = orch.decide_approval(a, approval_id, approved, principal.username, reason)
+    _persist(a)
+    return appr
 
 
 @app.post("/assessments/{assessment_id}/approvals/{approval_id}/execute")
@@ -628,9 +673,11 @@ def execute_approval(assessment_id: str, approval_id: str,
         raise HTTPException(429, "too many execution requests -- slow down and try again shortly")
     a = _get(assessment_id)
     try:
-        return orch.execute_approval(a, approval_id, executed_by=principal.username)
+        run = orch.execute_approval(a, approval_id, executed_by=principal.username)
     except ScopeError as e:
         raise HTTPException(400, str(e))
+    _persist(a)
+    return run
 
 
 @app.post("/assessments/{assessment_id}/report")
@@ -639,6 +686,7 @@ def report(assessment_id: str, principal: Principal = Depends(require_role("anal
     out = DATA_DIR / assessment_id / "report.pdf"
     generate_report(a, out)
     a.state = "reported"
+    _persist(a)
     audit.append(principal.username, "report.generated", assessment=a.id, path=str(out))
     return FileResponse(str(out), media_type="application/pdf", filename=f"VAPT-{a.id}.pdf")
 

@@ -23,6 +23,7 @@ from vapt_agent import accounts, api
 from vapt_agent.audit import AuditLog
 from vapt_agent.models import ToolRun
 from vapt_agent.orchestrator import Orchestrator
+from vapt_agent.store import AssessmentStore
 
 FIX = Path(__file__).parent / "fixtures"
 GOOD_PW = "correct-horse-battery-1"
@@ -38,6 +39,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "audit", audit)
     monkeypatch.setattr(api, "orch", Orchestrator(tmp_path, audit))
     monkeypatch.setattr(api, "ASSESSMENTS", {})
+    monkeypatch.setattr(api, "assessment_store", AssessmentStore(tmp_path / "assessments.db"))
     store = accounts.AccountStore(tmp_path / "auth.db")
     store.create_user("alice", GOOD_PW, "analyst")
     store.create_user("bob", GOOD_PW, "lead")
@@ -730,3 +732,44 @@ def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, 
         monkeypatch.setattr(api, "account_store", None)  # simulate a second process starting up
         api.get_store()
         assert "admin" not in caplog.text                # no password reprinted
+
+
+# FS-1: persistent storage for Assessment objects across restarts.
+
+def test_assessment_survives_a_simulated_restart(env):
+    """Create, import, and analyse an assessment (several of the mutating routes that each call
+    _persist), then simulate the process restarting: drop the in-memory ASSESSMENTS dict and
+    reload it the same way api.lifespan() does on startup. The assessment -- plan, findings,
+    state -- must come back exactly as it was, not just exist."""
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    before = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()
+    assert before["findings"]
+    assert before["state"] == "analysed"
+
+    api.ASSESSMENTS.clear()                      # simulate the process stopping...
+    api.ASSESSMENTS.update(api.get_assessment_store().load_all())   # ...and lifespan() on restart
+
+    after = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()
+    assert after["state"] == before["state"]
+    assert after["findings"] == before["findings"]
+    assert after["plan"] == before["plan"]
+
+
+def test_a_second_process_reading_the_same_db_file_sees_the_assessment(tmp_path):
+    """Not through the TestClient fixture's shared monkeypatched store -- construct a second,
+    independent AssessmentStore over the same file path, the way a genuinely separate process
+    restart would, and confirm it reads back what the first one wrote."""
+    from vapt_agent.store import AssessmentStore
+    from vapt_agent.models import Assessment, ScopeModel
+
+    db_path = tmp_path / "assessments.db"
+    scope = ScopeModel(targets=["10.10.10.5"], lab_attestation=True)
+    a = Assessment(request="restart check", scope=scope)
+    AssessmentStore(db_path).save(a)
+
+    second_process_store = AssessmentStore(db_path)
+    reloaded = second_process_store.load_all()
+    assert reloaded[a.id].request == "restart check"
