@@ -15,7 +15,7 @@ from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate, Spacer,
 from . import frameworks
 from .adapters import integration_matrix
 from .llm import summarize_assessment
-from .models import Assessment, Finding
+from .models import Assessment, Finding, is_false_positive
 from .risk import describe_cvss_vector
 
 SEV_COLOR = {"critical": colors.HexColor("#7f1d1d"), "high": colors.HexColor("#c2410c"),
@@ -47,7 +47,16 @@ EXPOSURE_IMPACT_TEXT = {
 
 
 def _status_clause(f: Finding) -> str:
-    """Grounded in the finding's own recorded status/validation -- never a severity-based guess."""
+    """Grounded in the finding's own recorded status/validation -- never a severity-based guess.
+    An explicit analyst false-positive verdict (A9) is checked first and stated plainly either
+    way, since a human call on this should never be buried under an automated corroboration/
+    validation clause that was computed before the analyst reviewed it."""
+    if f.analyst_marked_false_positive is True:
+        reason = f" ({_esc(f.analyst_fp_reason)})" if f.analyst_fp_reason else ""
+        return f"An analyst has explicitly confirmed this finding as a false positive{reason}."
+    if f.analyst_marked_false_positive is False and f.status == "false_positive_candidate":
+        return ("This finding was automatically flagged as a possible false positive, but an "
+               "analyst has reviewed it and confirmed it is genuine.")
     if f.validation_status == "validated":
         return "This finding has been confirmed through approved active validation."
     if f.validation_status == "not_reproducible":
@@ -91,9 +100,11 @@ def _stats_rows(a: Assessment) -> list[list[str]]:
     for f in a.findings:
         if f.priority in prio:
             prio[f.priority] += 1
-    confirmed = sum(1 for f in a.findings if f.status == "confirmed")
-    suspected = sum(1 for f in a.findings if f.status == "suspected")
-    fp = sum(1 for f in a.findings if f.status == "false_positive_candidate")
+    # An analyst's explicit A9 verdict (is_false_positive) always wins over the raw status --
+    # these three counts stay mutually exclusive and still sum to len(a.findings).
+    confirmed = sum(1 for f in a.findings if not is_false_positive(f) and f.status == "confirmed")
+    suspected = sum(1 for f in a.findings if not is_false_positive(f) and f.status == "suspected")
+    fp = sum(1 for f in a.findings if is_false_positive(f))
     validated = sum(1 for f in a.findings if f.validation_status == "validated")
     tools_ok = sorted({r.tool for r in a.runs if r.status == "ok"})
     return [

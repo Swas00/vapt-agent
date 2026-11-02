@@ -793,7 +793,11 @@ test('the approval request button passes only the finding id, never scanner text
   await signIn(ui);
   ui.$('#createBtn').click();
   await settle();
-  ui.$('#findings button.ghost').click();
+  const findingsEl = ui.$('#findings');
+  const approvalBtn = [...findingsEl.querySelectorAll('button')]
+    .find((b) => b.textContent.includes('Request active-validation approval'));
+  assert.ok(approvalBtn, 'the request-approval button is rendered');
+  approvalBtn.click();
   await settle();
   const req = ui.calls.find((c) => /\/approvals$/.test(c.url));
   assert.ok(req, 'approval request sent despite quotes in the title');
@@ -827,6 +831,73 @@ test('changing a finding\'s remediation select posts the new status', async () =
 
   assert.ok(ui.calls.some((c) => /\/assessments\/asm-1\/findings\/raw-1\/remediation\?status=fixed$/.test(c.url)
                                && c.opts.method === 'POST'));
+});
+
+test('clicking "Mark FP" posts marked=true for that finding', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'not_validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'open', remediation_updated_by: '', analyst_marked_false_positive: null,
+             analyst_fp_set_by: '' };
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (opts.method === 'POST' && /\/false-positive\?marked=true$/.test(url)) return { body: {} };
+      return { body: assessment({ findings: [f] }) };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  const markBtn = [...ui.$('#findings').querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Mark FP');
+  assert.ok(markBtn, 'a Mark FP button is rendered for a non-viewer role');
+  markBtn.click();
+  await settle();
+
+  assert.ok(ui.calls.some((c) => /\/assessments\/asm-1\/findings\/raw-1\/false-positive\?marked=true$/.test(c.url)
+                               && c.opts.method === 'POST'));
+});
+
+test('a finding already marked a false positive shows "by <analyst>" and disables that button', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'not_validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'open', remediation_updated_by: '', analyst_marked_false_positive: true,
+             analyst_fp_set_by: 'bob' };
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment({ findings: [f] }) },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  assert.match(ui.$('#findings').innerHTML, /by bob/);
+  const markBtn = [...ui.$('#findings').querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Mark FP');
+  assert.equal(markBtn.disabled, true);
+});
+
+test('a viewer sees the false-positive verdict as read-only text, not buttons', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'not_validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'open', remediation_updated_by: '', analyst_marked_false_positive: null,
+             analyst_fp_set_by: '' };
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('victor', 'viewer') } : { body: assessment({ findings: [f] }) },
+  });
+  await settle();
+  await signIn(ui, 'victor');
+  ui.$('#createBtn').click();
+  await settle();
+
+  assert.equal([...ui.$('#findings').querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Mark FP'), undefined);
+  assert.match(ui.$('#findings').innerHTML, /not reviewed/);
 });
 
 test('a viewer sees the remediation status as read-only text, not a select', async () => {

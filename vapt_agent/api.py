@@ -754,6 +754,22 @@ def set_remediation_status(assessment_id: str, finding_id: str, status: str,
     return f
 
 
+@app.post("/assessments/{assessment_id}/findings/{finding_id}/false-positive")
+def set_false_positive(assessment_id: str, finding_id: str, marked: bool, reason: str = "",
+                       principal: Principal = Depends(require_role("analyst"))):
+    """A9: an explicit analyst verdict, in either direction -- `marked=true` confirms a finding
+    as a false positive (whether or not the system's own correlation step already flagged it as
+    a candidate), `marked=false` explicitly overturns one that was. Always wins over the
+    system's own inference; see `models.is_false_positive()`."""
+    a = _get(assessment_id)
+    try:
+        f = orch.set_false_positive(a, finding_id, marked, principal.username, reason)
+    except StopIteration:
+        raise HTTPException(404, "finding not found")
+    _persist(a)
+    return f
+
+
 @app.post("/assessments/{assessment_id}/approvals")
 def request_approval(assessment_id: str, body: ApprovalReq,
                      principal: Principal = Depends(require_role("analyst"))):

@@ -4,7 +4,7 @@ score = 100 * (0.45*cvss/10 + 0.20*exploitability + 0.15*exposure + 0.20*asset_i
 """
 from __future__ import annotations
 
-from .models import Finding, ScopeModel, SEVERITY_ORDER
+from .models import Finding, ScopeModel, SEVERITY_ORDER, is_false_positive
 
 # Used ONLY when a tool gave a severity band but no CVSS. Flagged as estimated everywhere it appears.
 BAND_TO_CVSS = {"critical": 9.5, "high": 8.0, "medium": 5.5, "low": 2.5, "info": 0.0}
@@ -64,7 +64,7 @@ def score(f: Finding, scope: ScopeModel) -> Finding:
     raw = 0.45 * base + 0.20 * expl + 0.15 * expo + 0.20 * impact
     conf_factor = 0.5 + 0.5 * f.confidence
     s = round(100 * raw * conf_factor, 1)
-    if f.status == "false_positive_candidate":
+    if is_false_positive(f):
         s = round(s * 0.4, 1)
     f.risk_score = s
     f.priority = "P1" if s >= 65 else "P2" if s >= 45 else "P3" if s >= 25 else "P4"

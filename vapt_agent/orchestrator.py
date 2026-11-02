@@ -265,6 +265,21 @@ class Orchestrator:
         self.audit.append(by, "finding.remediation_updated", assessment=a.id, finding=finding_id, status=status)
         return f
 
+    # ---- false-positive marking (A9: analyst-set only, never inferred) ---
+    def set_false_positive(self, a: Assessment, finding_id: str, marked: bool, by: str,
+                           reason: str = "") -> Finding:
+        """An explicit human verdict, distinct from `status`'s own "false_positive_candidate"
+        inference (correlate.py). Always re-scores the finding afterward, since risk.score()'s
+        discount now reads `is_false_positive()` (status OR this override), not status alone."""
+        f = next(x for x in a.findings if x.id == finding_id)
+        from .models import now
+        f.analyst_marked_false_positive = marked
+        f.analyst_fp_reason, f.analyst_fp_set_by, f.analyst_fp_set_at = reason, by, now()
+        risk.score(f, a.scope)
+        self.audit.append(by, "finding.false_positive_marked", assessment=a.id, finding=finding_id,
+                          marked=marked, reason=reason)
+        return f
+
     # ---- human-in-the-loop approval for active validation ---------------
     def request_approval(self, a: Assessment, finding_id: str, action: str, module: str = "",
                          requested_by: str = "analyst") -> Approval:

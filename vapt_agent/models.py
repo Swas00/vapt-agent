@@ -88,6 +88,26 @@ class Finding(BaseModel):
     remediation_status: Literal["open", "in_progress", "fixed", "retested"] = "open"
     remediation_updated_by: str = ""
     remediation_updated_at: str = ""
+    # A9: an explicit analyst verdict on whether this finding is a false positive -- distinct from
+    # `status`'s "false_positive_candidate", which is only ever the system's OWN inference
+    # (correlate.py: single tool, low confidence, generic info-level). None = analyst hasn't
+    # reviewed it; True/False is a human call that always wins over the inference either way (see
+    # `is_false_positive()` below) -- an analyst can confirm a flagged candidate is indeed a false
+    # positive, or just as importantly, overturn one that was flagged wrongly.
+    analyst_marked_false_positive: Optional[bool] = None
+    analyst_fp_reason: str = ""
+    analyst_fp_set_by: str = ""
+    analyst_fp_set_at: str = ""
+
+
+def is_false_positive(f: Finding) -> bool:
+    """The single place every consumer (risk.py's scoring discount, planner.py's corroboration
+    triggers, report.py's counts/labelling) should check, so the analyst's explicit A9 verdict
+    and the system's own inference never drift into two different answers to "is this a false
+    positive" in different parts of the codebase."""
+    if f.analyst_marked_false_positive is not None:
+        return f.analyst_marked_false_positive
+    return f.status == "false_positive_candidate"
 
 
 class ToolRun(BaseModel):

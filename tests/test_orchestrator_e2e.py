@@ -106,6 +106,51 @@ def test_set_remediation_status_records_who_and_when(orch, assessment):
     assert entry["actor"] == "bob" and entry["details"]["status"] == "fixed"
 
 
+def test_set_false_positive_overrides_inferred_status_and_rescoes(orch, assessment):
+    """A9: a weak, single-source info finding gets inferred as 'false_positive_candidate' by
+    correlate.py; an analyst explicitly confirming it is a no-op on the verdict but records who
+    and when; an analyst explicitly overturning the inference raises its risk score back up."""
+    from vapt_agent.models import Finding, is_false_positive
+    from vapt_agent.risk import score as risk_score
+
+    f = Finding(title="X-Content-Type-Options header missing", asset="10.10.10.5", port=80,
+               source_tools=["nikto"], severity="info", confidence=0.3,
+               status="false_positive_candidate")
+    assessment.findings = [f]
+    risk_score(f, assessment.scope)
+    inferred_score = f.risk_score
+    assert is_false_positive(f)
+
+    overturned = orch.set_false_positive(assessment, f.id, False, by="bob", reason="verified real on the host")
+    assert overturned.analyst_marked_false_positive is False
+    assert overturned.analyst_fp_reason == "verified real on the host"
+    assert overturned.analyst_fp_set_by == "bob"
+    assert overturned.analyst_fp_set_at
+    assert not is_false_positive(overturned)
+    assert overturned.risk_score > inferred_score     # no longer discounted
+
+    entry = next(e for e in orch.audit.entries() if e["action"] == "finding.false_positive_marked")
+    assert entry["actor"] == "bob" and entry["details"]["marked"] is False
+
+
+def test_set_false_positive_can_confirm_a_finding_the_system_never_flagged(orch, assessment):
+    """The reverse direction: a finding with no inferred flag at all can still be explicitly
+    marked a false positive by an analyst, and gets discounted accordingly."""
+    from vapt_agent.models import Finding, is_false_positive
+    from vapt_agent.risk import score as risk_score
+
+    f = Finding(title="Open port", asset="10.10.10.5", port=8080, severity="medium", cvss=5.0,
+               confidence=0.6, source_tools=["nmap"], status="suspected")
+    assessment.findings = [f]
+    risk_score(f, assessment.scope)
+    before = f.risk_score
+    assert not is_false_positive(f)
+
+    confirmed = orch.set_false_positive(assessment, f.id, True, by="alice", reason="known test harness noise")
+    assert is_false_positive(confirmed)
+    assert confirmed.risk_score < before
+
+
 def test_metasploit_execution_requires_approved_state(orch, assessment, tmp_path):
     orch.import_result(assessment, "nessus", FIX / "nessus_sample.nessus")
     orch.analyse(assessment)

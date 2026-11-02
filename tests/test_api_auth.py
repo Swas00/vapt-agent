@@ -422,6 +422,73 @@ def test_viewer_cannot_set_remediation_status(env):
     assert r.status_code == 403
 
 
+# A9: explicit false-positive marking, in either direction.
+
+def test_mark_false_positive_persists_and_is_attributed(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+    assert finding["analyst_marked_false_positive"] is None
+
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/false-positive"
+                        "?marked=true&reason=known+test+noise", headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["analyst_marked_false_positive"] is True
+    assert body["analyst_fp_reason"] == "known test noise"
+    assert body["analyst_fp_set_by"] == "alice"
+
+    refreshed = next(f for f in env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"]
+                     if f["id"] == finding["id"])
+    assert refreshed["analyst_marked_false_positive"] is True
+    entry = env.entries("finding.false_positive_marked")[0]
+    assert entry["actor"] == "alice" and entry["details"]["marked"] is True
+
+
+def test_mark_not_false_positive_overturns_the_inference(env):
+    """Force correlate.py to flag a finding as a false-positive candidate (single tool, info,
+    low confidence), then explicitly overturn that inference through the API."""
+    from vapt_agent import api as api_mod
+
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    from vapt_agent.models import Finding
+    api_mod.ASSESSMENTS[a["id"]].raw_findings = [
+        Finding(title="X-Content-Type-Options header missing", asset="10.10.10.5", port=80,
+               source_tools=["nikto"], severity="info", confidence=0.3)]
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+    assert finding["status"] == "false_positive_candidate"
+
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/false-positive?marked=false",
+                        headers=hdr)
+    assert r.status_code == 200
+    assert r.json()["analyst_marked_false_positive"] is False
+
+
+def test_mark_false_positive_404s_on_unknown_finding(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.post(f"/assessments/{a['id']}/findings/no-such-finding/false-positive?marked=true",
+                        headers=hdr)
+    assert r.status_code == 404
+
+
+def test_viewer_cannot_mark_false_positive(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"][0]
+
+    viewer_hdr = session(env, "victor")
+    r = env.client.post(f"/assessments/{a['id']}/findings/{finding['id']}/false-positive?marked=true",
+                        headers=viewer_hdr)
+    assert r.status_code == 403
+
+
 def test_admin_routes_require_admin_role(env):
     alice_hdr = session(env, "alice")
     r = env.client.post("/admin/users", json={"username": "x", "password": GOOD_PW, "role": "viewer"},

@@ -1,5 +1,5 @@
 from vapt_agent.correlate import correlate
-from vapt_agent.models import Finding, ScopeModel
+from vapt_agent.models import Finding, ScopeModel, is_false_positive
 from vapt_agent.risk import describe_cvss_vector, parse_cvss_vector, score
 
 
@@ -112,6 +112,24 @@ def test_score_uses_the_medium_default_when_asset_criticality_has_no_entry():
     score(f, scope)
     assert f.risk_breakdown["asset_impact"]["criticality"] == "medium"
     assert f.risk_breakdown["asset_impact"]["set_by"] == "default"
+
+
+# A9: the single `is_false_positive()` predicate every consumer checks.
+
+def test_is_false_positive_defaults_to_the_inferred_status():
+    inferred = Finding(title="t", asset="10.10.10.5", status="false_positive_candidate")
+    not_inferred = Finding(title="t", asset="10.10.10.5", status="suspected")
+    assert is_false_positive(inferred) is True
+    assert is_false_positive(not_inferred) is False
+
+
+def test_is_false_positive_analyst_override_wins_either_direction():
+    overturned = Finding(title="t", asset="10.10.10.5", status="false_positive_candidate",
+                         analyst_marked_false_positive=False)
+    confirmed = Finding(title="t", asset="10.10.10.5", status="suspected",
+                        analyst_marked_false_positive=True)
+    assert is_false_positive(overturned) is False
+    assert is_false_positive(confirmed) is True
 
 
 def test_parse_cvss_vector_extracts_metrics():

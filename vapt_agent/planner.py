@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from .models import Assessment, Finding, PlanStep, Service
+from .models import Assessment, Finding, PlanStep, Service, is_false_positive
 
 TOOL_FOR_WEB = ["nikto", "zap"]
 
@@ -150,7 +150,7 @@ def _candidates_from_findings(a: Assessment, findings: list[Finding]) -> list[Ca
     # nmap vulners check there would tell us nothing we don't already know.
     nmap_cve_ports = {(rf.asset, rf.port) for rf in a.raw_findings if "nmap" in rf.source_tools and rf.cve}
     for f in findings:
-        if f.status == "false_positive_candidate":
+        if is_false_positive(f):
             continue
         # Cloud-metadata-SSRF is checked regardless of the finding's own reported severity: a web
         # scanner commonly reports a raw SSRF as "medium" because it only sees the redirect, not
@@ -314,7 +314,7 @@ def propose_validation_steps(a: Assessment, findings: list[Finding]) -> list[dic
     This NEVER runs anything -- it only produces the request for a human to approve or deny."""
     proposals = []
     for f in findings:
-        if f.severity in ("critical", "high") and f.status != "false_positive_candidate" and f.cve:
+        if f.severity in ("critical", "high") and not is_false_positive(f) and f.cve:
             proposals.append({
                 "finding_id": f.id, "asset": f.asset,
                 "action": f"Run msfconsole in 'check' mode (non-exploitative where the module supports it) "

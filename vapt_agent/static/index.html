@@ -932,6 +932,17 @@ const setRemediation = entry(async (findingId, status, el) => {
   }
 });
 
+const setFalsePositive = entry(async (findingId, marked, btn) => {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    await api(`/assessments/${currentId}/findings/${findingId}/false-positive?marked=${marked}`,
+             {method:'POST'});
+    await refresh();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
+});
+
 const requestApproval = entry(async (findingId, btn) => {
   // Built here, from the current in-memory finding, rather than threaded through an inline
   // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
@@ -1051,8 +1062,13 @@ function render(){
 
   $('#findings').innerHTML = (current.findings||[]).map(f => {
     const refs = [...(f.cve||[]), ...(f.cwe||[]), ...(f.owasp||[])];
-    const fpBadge = f.status === 'false_positive_candidate'
-      ? '<span class="pill sev-medium" title="Low-confidence, single-source, generic finding">possible false positive</span>' : '';
+    // Mirrors models.is_false_positive(): an explicit analyst verdict (A9) always wins over the
+    // system's own inference, in either direction.
+    const isFp = f.analyst_marked_false_positive === true
+      || (f.analyst_marked_false_positive !== false && f.status === 'false_positive_candidate');
+    const fpBadge = isFp
+      ? `<span class="pill sev-medium" title="${f.analyst_marked_false_positive === true ? 'Confirmed by an analyst' : 'Low-confidence, single-source, generic finding'}">${f.analyst_marked_false_positive === true ? 'false positive (confirmed)' : 'possible false positive'}</span>`
+      : '';
     const dupBadge = (f.merged_from||[]).length
       ? `<span class="pill sev-info" style="opacity:.7" title="Merged from ${f.merged_from.length} duplicate report(s)">⇄ ${f.source_tools.length} tools merged</span>` : '';
     return `
@@ -1073,6 +1089,16 @@ function render(){
                  `<option value="${s}" ${s === f.remediation_status ? 'selected' : ''}>${s}</option>`).join('')}
              </select>`}
         ${f.remediation_updated_by ? `<span class="mono" style="opacity:.7">by ${esc(f.remediation_updated_by)}</span>` : ''}
+      </div>
+      <div class="row" style="margin-top:4px">
+        <span class="mono" style="margin:0">False positive:</span>
+        ${currentRole === 'viewer'
+          ? `<span class="mono">${typeof f.analyst_marked_false_positive === 'boolean' ? f.analyst_marked_false_positive : 'not reviewed'}</span>`
+          : `<button class="ghost" ${f.analyst_marked_false_positive === true ? 'disabled' : ''}
+               onclick="setFalsePositive('${esc(f.id)}', true, this)" title="A9: explicit analyst verdict, overrides the inference either way">Mark FP</button>
+             <button class="ghost" ${f.analyst_marked_false_positive === false ? 'disabled' : ''}
+               onclick="setFalsePositive('${esc(f.id)}', false, this)">Not FP</button>`}
+        ${typeof f.analyst_marked_false_positive === 'boolean' ? `<span class="mono" style="opacity:.7">by ${esc(f.analyst_fp_set_by)}</span>` : ''}
       </div>
       ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' && currentRole !== 'viewer' ?
         `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}',this)">Request active-validation approval</button>` : ''}
