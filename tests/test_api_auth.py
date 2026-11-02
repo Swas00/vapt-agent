@@ -368,6 +368,16 @@ def test_import_and_report_are_attributed(env):
     assert env.entries("report.generated")[0]["actor"] == "bob"
 
 
+def test_oversized_import_rejected_with_413_not_buffered(env):
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    oversized = b"x" * (api.MAX_UPLOAD_BYTES + 1)
+    r = env.client.post(f"/assessments/{a['id']}/import/nessus", headers=hdr,
+                        files={"file": ("huge.nessus", oversized, "application/xml")})
+    assert r.status_code == 413
+    assert not (env.tmp / a["id"] / "raw" / "huge.nessus").exists()
+
+
 def test_tool_runs_record_who_triggered_them(env, monkeypatch):
     def fake_run(target, preset, workdir, timeout=900):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="failed",

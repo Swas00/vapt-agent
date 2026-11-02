@@ -207,6 +207,26 @@ def _safe_filename(name: str | None) -> str:
     return cleaned[:120] or "upload"
 
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+async def _read_upload_capped(file: UploadFile, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
+    """Read an upload in chunks, rejecting with 413 the moment the cap is crossed -- rather
+    than buffering the whole body first and checking after, which defeats the point of a cap."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(413, f"upload exceeds the {max_bytes // (1024 * 1024)}MB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 # ---------------------------------------------------------------------------
 # Authentication routes
 # ---------------------------------------------------------------------------
@@ -428,9 +448,10 @@ def run_step(assessment_id: str, step_id: str, principal: Principal = Depends(re
 async def import_result(assessment_id: str, tool: str, file: UploadFile = File(...),
                         principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
+    content = await _read_upload_capped(file)
     dest = DATA_DIR / assessment_id / "raw" / _safe_filename(file.filename)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(await file.read())
+    dest.write_bytes(content)
     try:
         return orch.import_result(a, tool, dest, actor=principal.username)
     except ScopeError as e:
