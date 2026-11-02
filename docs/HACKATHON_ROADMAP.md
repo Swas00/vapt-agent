@@ -136,8 +136,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [ ] A3. `GET /assessments` pagination (`limit`/`offset`) and basic filtering (`state=`)
 - [ ] A4. Re-run `demo.py`/`live_demo.py` against the organizer's actual lab target once issued (PS §9.1)
 - [ ] A5. JSON/CSV export of findings alongside the PDF (ticketing/SIEM handoff)
-- [ ] A6. Retest workflow: re-run the same scope, diff findings against the prior assessment (new/fixed/persisting)
-- [ ] A7. Remediation status lifecycle on `Finding` (open/in-progress/fixed/retested), surfaced in report §5
+- [x] A6. Retest workflow *(done — HP-6: `vapt_agent/diff.py`, `GET /assessments/{after}/diff/{before}`, UI compare card)*
+- [x] A7. Remediation status lifecycle on `Finding` *(done — HP-7)*
 - [ ] A8. Multi-target batch assessments (today one `ScopeModel.targets` list works, but there's no "assessment group" concept for comparing N hosts)
 - [ ] A9. Explicit "mark finding as false positive" analyst action (today it's inferred, not analyst-confirmable)
 - [ ] A10. Persist `Assessment` objects to disk (even flat JSON per-id) so a server restart during a demo doesn't lose state
@@ -146,8 +146,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [x] B1. **Minimal actor authentication** *(done — CR-1)* — at minimum, a shared bearer token / API key required on all mutating endpoints, with the authenticated identity (not a client-supplied string) written to `by`/`decided_by`
 - [x] B2. Upload size cap *(done — CR-2: 25MB, chunked read, clear 413)*
 - [ ] B3. Upload content-type/extension allow-list per tool *(partial: a malformed import now 400s cleanly instead of crashing -- CR-2 -- but there's still no allow-list rejecting a well-formed-but-wrong-tool file before parsing)*
-- [ ] B4. Rate limiting on scan-triggering and Metasploit-execution endpoints specifically (not just globally)
-- [ ] B5. Security response headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a CSP) on the FastAPI app and the static UI
+- [x] B4. Rate limiting on scan-triggering and Metasploit-execution endpoints specifically *(done — HP-1)*
+- [x] B5. Security response headers *(done — HP-2)*
 - [ ] B6. `SECURITY.md` documenting the threat model: this app is designed to run against untrusted scan output — state that explicitly, since it's the system's whole selling point
 - [ ] B7. Secrets handling audit: confirm `ANTHROPIC_API_KEY` / future tokens are never logged (spot-checked: `llm.py`/`reasoning.py` never print the key; good, but add an explicit test)
 - [ ] B8. CSRF consideration *if* B1 adds cookie-based sessions (token-header auth sidesteps this; flag only if session cookies are chosen)
@@ -157,11 +157,11 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 ### C. User Experience and Accessibility
 - [ ] C1. Keyboard navigation audit: confirm every button/pill/details-summary is reachable and operable via Tab/Enter/Space (the motion system already respects `:focus-visible`; untested with an actual screen reader)
 - [ ] C2. ARIA live region on `#events` so the activity log announces updates to assistive tech (currently silent DOM mutation)
-- [ ] C3. Loading/empty/error states for every panel (today "No steps yet." exists for plan/findings/approvals — verify this is consistent and add a genuine loading spinner for in-flight `api()` calls, since those currently show nothing until they resolve)
+- [x] C3. Loading spinner on every in-flight `api()`-backed button *(done — HP-4; the "empty state" text for plan/findings/approvals was already consistent)*
 - [ ] C4. Inline validation on the request form (targets field format, at least one target required) before "Start assessment" is even clickable, rather than only server-side 400s
-- [ ] C5. Toast/inline error display instead of `alert()` (currently `api()` uses `alert(await res.text())` for every failure — functional but jarring and blocks the UI thread)
+- [x] C5. Toast/inline error display instead of `alert()` *(done — HP-3)*
 - [ ] C6. Color-contrast check of the new orange/amber palette against WCAG AA, specifically the `--muted` text on `--panel` background
-- [ ] C7. Mobile/tablet layout check for the two-column `main{grid-template-columns:420px 1fr}` (fixed 420px left column will overflow on narrow viewports — confirm a responsive breakpoint exists; currently none does)
+- [x] C7. Mobile/tablet layout check *(done — HP-5: `@media (max-width: 900px)` stacks the columns)*
 - [ ] C8. A "copy assessment ID" / shareable link affordance (today the id is just text)
 - [ ] C9. Persist the analyst's last-used scope inputs (targets/exclusions) in `localStorage` for convenience across sessions (pure client-side nicety, no backend change)
 
@@ -192,14 +192,14 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 
 ## 4. Security Hardening Checklist (consolidated from B above, ordered by what's actually exploitable today)
 
-1. **[Critical]** Add minimal auth (B1) — today, *any* network-reachable client can trigger Metasploit execution against a finding with zero identity check.
-2. **[Critical]** Upload size cap (B2) — today, a single large POST to `/import/{tool}` is read fully into memory with no limit.
-3. **[High]** Rate limiting on `/plan/{id}/run` and `/approvals/{id}/execute` (B4).
-4. **[High]** Content-type/extension validation before parsing an import (B3) — defusedxml already stops XXE; this stops wasted parse cycles on garbage input and gives a cleaner error.
-5. **[Medium]** Security response headers (B5).
-6. **[Medium]** `SECURITY.md` threat-model statement (B6) — cheap, and directly answers the "but your tool parses untrusted scanner output" question a judge might ask.
-7. **[Low]** `/healthz` without info leakage (B10).
-8. **[Low]** Path-traversal/null-byte hardening on the Metasploit module regex, already strong, add explicit tests (B9).
+1. ✅ **[Critical]** Add minimal auth (B1) — done, CR-1.
+2. ✅ **[Critical]** Upload size cap (B2) — done, CR-2.
+3. ✅ **[High]** Rate limiting on `/plan/{id}/run` and `/approvals/{id}/execute` (B4) — done, HP-1.
+4. **[High]** Content-type/extension validation before parsing an import (B3) — still open; CR-2 made a bad parse a clean 400 instead of a 500, but there's still no allow-list rejecting a well-formed-but-wrong-tool file before parsing.
+5. ✅ **[Medium]** Security response headers (B5) — done, HP-2.
+6. **[Medium]** `SECURITY.md` threat-model statement (B6) — still open; cheap, and directly answers the "but your tool parses untrusted scanner output" question a judge might ask.
+7. **[Low]** `/healthz` without info leakage (B10) — still open.
+8. **[Low]** Path-traversal/null-byte hardening on the Metasploit module regex, already strong, add explicit tests (B9) — still open.
 
 ---
 
@@ -273,13 +273,13 @@ doesn't silently regress on the next UI edit.
 
 | ID | Task | Description | Why | Outcome | FE | BE | DB | Security | Depends on | Acceptance criteria |
 |---|---|---|---|---|---|---|---|---|---|---|
-| HP-1 | Rate limiting on scan/execute endpoints | `slowapi` or a hand-rolled token-bucket keyed by auth identity, applied to `/plan/{id}/run` and `/approvals/{id}/execute` | Prevents abuse of the two endpoints that trigger real external processes | A misbehaving client can't hammer live scans | N/A | Middleware/dependency | N/A | Abuse prevention | CR-1 | >N requests/min from one identity → 429 |
-| HP-2 | Security response headers | `nosniff`, `X-Frame-Options`, a basic CSP allowing only same-origin scripts (the inline `<script>` tags need a nonce or `'unsafe-inline'` — document the tradeoff) | Defense-in-depth consistent with the product's own subject matter | Headers present on every response | N/A | Middleware | N/A | Direct | None | `curl -I` shows the headers |
-| HP-3 | Replace `alert()` with inline error UI | Toast/banner component, non-blocking | UX polish + accessibility (native `alert()` is a poor screen-reader experience) | Errors visible without blocking the thread | New error-banner component | N/A | N/A | N/A | None | A failed API call shows an inline message, page remains interactive |
-| HP-4 | Loading states on every async button | Disable + spinner while an `api()` call is in flight | PS/"meaningful feedback for every user action" (implicit UX expectation) | No more "did my click register?" moments | CSS spinner + disabled state | N/A | N/A | N/A | None | Click a button, it visibly disables until the response lands |
-| HP-5 | Responsive layout for the app shell | Replace the fixed `420px 1fr` grid with a responsive breakpoint (stacked columns under ~900px) | Judges may open the live demo on a laptop at an unusual resolution, or a tablet at a booth | No horizontal scroll/overflow at common widths | CSS media query | N/A | N/A | N/A | None | 768px viewport renders without horizontal scroll |
-| HP-6 | Retest/diff workflow | New vs. fixed vs. persisting findings between two assessments of the same scope | Directly demonstrates the PS's own "reduces manual coordination effort" success criterion over time, not just once | A second scan visibly shows what changed | Diff view in UI | `diff_assessments(a, b)` in a new module | N/A (compares two in-memory Assessment objects) | None new | None | Two assessments of the same target produce a correct new/fixed/persisting split |
-| HP-7 | Remediation status lifecycle | Add `remediation_status` to `Finding` (open/in-progress/fixed/retested), analyst-settable, shown in report §5 | PS's own named "Advanced/Bonus" item | Report can show remediation progress, not just a static solution string | UI control per finding | New field + endpoint to set it | N/A | None new | None | Setting a finding's status persists and appears in the next-generated report |
+| ✅ **DONE** — HP-1 | Rate limiting on scan/execute endpoints | Per-identity sliding-window limiter applied to `/plan/{id}/run` (10/min) and `/approvals/{id}/execute` (5/min) | Prevents abuse of the two endpoints that trigger real external processes | A misbehaving client can't hammer live scans | N/A | `api.run_limiter`/`execute_limiter` | N/A | Abuse prevention | CR-1 | >N requests/min from one identity → 429 (tested) |
+| ✅ **DONE** — HP-2 | Security response headers | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, and a CSP (same-origin, `'unsafe-inline'` for script/style -- documented tradeoff for the page's inline `<script>`/`onclick` handlers) | Defense-in-depth consistent with the product's own subject matter | Headers present on every response, success or error | N/A | `_add_security_headers` middleware | N/A | Direct | None | `curl -I` shows the headers (verified); tested on 200/401 responses |
+| ✅ **DONE** — HP-3 | Replace `alert()` with inline error UI | A dismissible, auto-expiring toast stack (`showError()`), `textContent`-only | UX polish + accessibility (native `alert()` is a poor screen-reader experience) | Errors visible without blocking the thread | `showError()` + `.toast-stack` | N/A | N/A | N/A | None | A failed API call shows a toast, page remains interactive (tested) |
+| ✅ **DONE** — HP-4 | Loading states on every async button | `busyEntry()` disables + spins the button for the call's duration; dynamic per-row buttons take the clicked element via `onclick="...,this"` | PS/"meaningful feedback for every user action" (implicit UX expectation) | No more "did my click register?" moments | CSS spinner + disabled state | N/A | N/A | N/A | None | Click a button, it visibly disables until the response lands (tested) |
+| ✅ **DONE** — HP-5 | Responsive layout for the app shell | `@media (max-width: 900px)` stacks the two columns instead of the fixed `420px 1fr` grid; toast width capped to viewport | Judges may open the live demo on a laptop at an unusual resolution, or a tablet at a booth | No horizontal scroll/overflow at common widths | CSS media query | N/A | N/A | N/A | None | Verified by CSS reasoning (no layout engine in the jsdom test harness to assert against) |
+| ✅ **DONE** — HP-6 | Retest/diff workflow | New vs. fixed vs. persisting findings between two assessments of the same scope | Directly demonstrates the PS's own "reduces manual coordination effort" success criterion over time, not just once | A second scan visibly shows what changed | "Compare to a previous assessment" card | `vapt_agent/diff.compare()`, `GET /assessments/{after}/diff/{before}` | N/A (compares two in-memory Assessment objects) | None new | None | Two assessments of the same target produce a correct new/fixed/persisting split (tested) |
+| ✅ **DONE** — HP-7 | Remediation status lifecycle | `Finding.remediation_status` (open/in_progress/fixed/retested, analyst-settable, never inferred), shown in report §5 plus a progress count | PS's own named "Advanced/Bonus" item | Report can show remediation progress, not just a static solution string | Per-finding `<select>` | `set_remediation_status()`, `POST .../findings/{id}/remediation` | N/A | None new | None | Setting a finding's status persists and appears in the next-generated report (tested) |
 
 ### Tier 3 — Competitive Advantage
 
