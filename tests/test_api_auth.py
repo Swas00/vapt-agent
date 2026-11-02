@@ -378,6 +378,15 @@ def test_oversized_import_rejected_with_413_not_buffered(env):
     assert not (env.tmp / a["id"] / "raw" / "huge.nessus").exists()
 
 
+def test_malformed_import_body_is_a_clean_400_not_a_500(env):
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    r = env.client.post(f"/assessments/{a['id']}/import/nessus", headers=hdr,
+                        files={"file": ("bad.nessus", b'{"not": "xml"}', "application/xml")})
+    assert r.status_code == 400
+    assert "could not parse" in r.text
+
+
 def test_tool_runs_record_who_triggered_them(env, monkeypatch):
     def fake_run(target, preset, workdir, timeout=900):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="failed",

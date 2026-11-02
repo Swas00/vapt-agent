@@ -15,10 +15,12 @@ separation of duties, not just "any logged-in person."
 from __future__ import annotations
 
 import hmac as _hmac
+import json as _json
 import re
 import sys
 import threading
 import time
+import xml.etree.ElementTree as _ET
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -456,6 +458,8 @@ async def import_result(assessment_id: str, tool: str, file: UploadFile = File(.
         return orch.import_result(a, tool, dest, actor=principal.username)
     except ScopeError as e:
         raise HTTPException(400, str(e))
+    except (_ET.ParseError, _json.JSONDecodeError) as e:
+        raise HTTPException(400, f"could not parse this as a {tool} import: {e}")
 
 
 @app.post("/assessments/{assessment_id}/analyse")
