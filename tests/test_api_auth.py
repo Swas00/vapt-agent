@@ -415,6 +415,36 @@ def test_poll_unknown_run_id_404s(env):
     assert r.status_code == 404
 
 
+def test_run_step_is_rate_limited_per_identity(env, monkeypatch):
+    monkeypatch.setattr(api, "run_limiter", api._SlidingWindowLimiter(max_events=2, window_seconds=60.0))
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    step = a["plan"][0]["id"]
+    for _ in range(2):
+        r = env.client.post(f"/assessments/{a['id']}/plan/{step}/run", headers=hdr)
+        assert r.status_code == 400             # step isn't 'approved' yet -- still counts against the limiter
+    r = env.client.post(f"/assessments/{a['id']}/plan/{step}/run", headers=hdr)
+    assert r.status_code == 429
+
+
+def test_execute_approval_is_rate_limited_per_identity(env, monkeypatch):
+    monkeypatch.setattr(api, "execute_limiter", api._SlidingWindowLimiter(max_events=1, window_seconds=60.0))
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a['id']}/analyse", headers=hdr)
+    finding = next(f for f in env.client.get(f"/assessments/{a['id']}", headers=hdr).json()["findings"]
+                   if f["severity"] in ("critical", "high"))
+    appr = env.client.post(f"/assessments/{a['id']}/approvals", headers=hdr,
+                           json={"finding_id": finding["id"], "action": "validate"}).json()
+    env.client.post(f"/assessments/{a['id']}/approvals/{appr['id']}/decision?approved=true", headers=hdr)
+
+    r1 = env.client.post(f"/assessments/{a['id']}/approvals/{appr['id']}/execute", headers=hdr)
+    assert r1.status_code != 429             # the one allowed call -- business outcome doesn't matter here
+    r2 = env.client.post(f"/assessments/{a['id']}/approvals/{appr['id']}/execute", headers=hdr)
+    assert r2.status_code == 429
+
+
 def test_tool_runs_record_who_triggered_them(env, monkeypatch):
     def fake_run(target, preset, workdir, timeout=900):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="failed",

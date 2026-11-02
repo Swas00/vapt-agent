@@ -125,6 +125,12 @@ class _FailureLogThrottle:
 login_limiter = _SlidingWindowLimiter(max_events=15, window_seconds=300.0)
 _auth_failure_throttle = _FailureLogThrottle()
 
+# Scoped to the two routes that trigger a real external process (a scan subprocess, or
+# Metasploit) -- keyed by the authenticated identity, not the client IP, so it can't be dodged
+# by rotating source addresses and doesn't penalize other analysts sharing a NAT'd network.
+run_limiter = _SlidingWindowLimiter(max_events=10, window_seconds=60.0)
+execute_limiter = _SlidingWindowLimiter(max_events=5, window_seconds=60.0)
+
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
@@ -442,6 +448,8 @@ def run_step(assessment_id: str, step_id: str, background_tasks: BackgroundTasks
             principal: Principal = Depends(require_role("analyst"))):
     """Marks the step running and returns immediately; the scan itself runs in the background
     so the request doesn't block on the subprocess. Poll GET .../runs/{run_id} for completion."""
+    if not run_limiter.allow(principal.username):
+        raise HTTPException(429, "too many scan requests -- slow down and try again shortly")
     a = _get(assessment_id)
     try:
         run = orch.start_step(a, step_id, actor=principal.username)
@@ -506,6 +514,8 @@ def decide_approval(assessment_id: str, approval_id: str, approved: bool, reason
 @app.post("/assessments/{assessment_id}/approvals/{approval_id}/execute")
 def execute_approval(assessment_id: str, approval_id: str,
                      principal: Principal = Depends(require_role("lead"))):
+    if not execute_limiter.allow(principal.username):
+        raise HTTPException(429, "too many execution requests -- slow down and try again shortly")
     a = _get(assessment_id)
     try:
         return orch.execute_approval(a, approval_id, executed_by=principal.username)
