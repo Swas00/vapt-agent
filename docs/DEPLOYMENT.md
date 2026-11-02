@@ -47,6 +47,37 @@ The unit file runs as the dedicated `vaptagent` system account (never root), wit
 `ProtectSystem=strict` and `ReadWritePaths` scoped to exactly `/opt/vapt-agent/data` -- the one
 directory this process needs to write to.
 
+## Option C: Render (judge-facing demo, free tier)
+
+For a quick, publicly reachable URL during the hackathon window, `render.yaml` (Blueprint) at the
+repo root drives this:
+
+1. Push the repo to GitHub (already done for this project).
+2. In the Render dashboard: **New → Blueprint**, connect the `vapt-agent` repo. Render reads
+   `render.yaml` and proposes one `docker` web service on the free plan.
+3. Render will prompt for the two secrets marked `sync: false` in `render.yaml` — set them before
+   the first deploy:
+   - `VAPT_ANALYST_TOKENS` — e.g. generate with
+     `python3 -c 'import secrets;print(secrets.token_urlsafe(24))'` and set it as
+     `<token>:<your-name>`. Without this, the server falls back to dev mode and prints a
+     single-use token to the service's log on boot instead (see "First login" below) — fine for a
+     quick demo, but the token changes on every redeploy/restart.
+   - `ANTHROPIC_API_KEY` — optional, enables LLM-phrased report prose; leave blank to use the
+     deterministic template.
+4. Deploy. Render builds the existing `Dockerfile` as-is — no changes needed.
+
+**Known tradeoff on the free plan**: disk is ephemeral. A redeploy, or the free plan's sleep/wake
+cycle after inactivity, wipes `/app/data` — the audit log, accounts, and any imported
+assessments. That's an accepted tradeoff for a short-lived demo instance, not a bug; a deployment
+that needs state to survive restarts should use Render's Starter plan with a persistent disk
+mounted at `/app/data` (added the same way as `./data` is bind-mounted in `docker-compose.yml`),
+or Option A/B above on infrastructure you control.
+
+Live scanning (`nmap`/`nikto`/`msfconsole`) is unavailable on the Render instance by design — the
+image deliberately doesn't bundle those tools (see the Dockerfile's comment). Import-based
+ingestion, correlation, risk scoring, reporting, and the full UI all work normally; only live
+subprocess scanning needs a build that installs them.
+
 ## First login
 
 On first start (either option), the server bootstraps an `admin` account with a random generated

@@ -1,0 +1,18 @@
+# Render Blueprint for a judge-facing demo deploy (free tier). See docs/DEPLOYMENT.md
+# "Deploying to Render" for the one-time setup steps (connect repo, set secrets).
+#
+# Free tier has ephemeral disk: a redeploy or sleep/wake cycle wipes /app/data (audit log,
+# accounts, raw tool output). That's an accepted tradeoff for a demo instance, not a bug --
+# see docs/DEPLOYMENT.md for the paid-plan persistent-disk alternative. Live scanning
+# (nmap/nikto/msfconsole) is unavailable on this instance by design -- see the Dockerfile's
+# comment; import-based ingestion, correlation, risk scoring, reporting, and the UI all work.
+services:
+  - type: web
+    name: vapt-agent
+    runtime: docker
+    plan: free
+    envVars:
+      - key: VAPT_ANALYST_TOKENS
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
