@@ -656,6 +656,12 @@ def test_security_headers_present_on_every_response_success_or_error(env):
         assert "default-src 'self'" in r.headers["content-security-policy"]
 
 
+def test_healthz_is_public_and_requires_no_session(env):
+    r = env.client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
 # ---- startup behaviour ------------------------------------------------------------------------------
 
 def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, monkeypatch, capsys):

@@ -104,6 +104,13 @@ async def _add_security_headers(request: Request, call_next):
     return response
 
 
+# Unauthenticated liveness check for a load balancer / uptime probe -- deliberately reveals nothing
+# about assessments, accounts, or scan state, so it carries no auth and no rate limit.
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting / noise control around authentication (transport-level concerns, not account
 # storage, so these live here rather than in accounts.py)
