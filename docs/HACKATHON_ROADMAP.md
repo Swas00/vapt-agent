@@ -28,10 +28,9 @@ rather than just the PDF.
 - **Efficiency & Robustness (5 pts)** — was the weakest-tested of the eight criteria; scan execution
   is now backgrounded with a poll endpoint (CR-3), so "monitor running jobs" (PS §5.3) is
   demonstrable live. `execute_approval` (Metasploit) is still synchronous by choice -- see §8.
-- **Testing** — 88 passing tests, but **zero of them exercise the actual HTTP API** (confirmed
-  below: no `TestClient` anywhere in the test suite). Everything is tested through `orchestrator.py`
-  directly, which is real and valuable, but it means the FastAPI routing/serialization/error-path
-  layer that the live demo actually runs through has never been automatically tested.
+- **Testing** — grown to 191 Python + 25 jsdom tests; the HTTP-API gap this line used to describe
+  is closed (CR-1/CR-5): `tests/test_api_auth.py` exercises real FastAPI routing, cookies/CSRF,
+  file upload, and the full create→...→report flow, not just `orchestrator.py` directly.
 
 None of this is a rebuild. It's targeted hardening on top of an already-solid core.
 
@@ -119,7 +118,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 | **API-level rate limiting** | No `slowapi`/limiter/middleware anywhere; not in `requirements.txt` | A buggy or malicious client can hammer `/plan/{id}/run` (triggers real scans) or `/approvals/{id}/execute` (triggers Metasploit) with no throttle |
 | ~~**Upload size/type limits**~~ **(RESOLVED — CR-2)** | was: whole file buffered, no size check | 25MB cap enforced via chunked read (413 on overflow); a malformed import now 400s cleanly instead of a raw parse-exception 500 |
 | ~~**Async/background scan execution**~~ **(RESOLVED — CR-3)** | was: `def run_step` synchronous | `start_step`/`finish_step` + `BackgroundTask` + poll endpoint (see 2.2). Cancel is still not implemented (A2, unchanged). |
-| **Any FastAPI-level test (`TestClient`)** | `grep -rln "TestClient" tests/ vapt_agent/` → zero hits | 88/88 passing tests never once go through HTTP routing, request parsing, or file-upload handling — only `orchestrator.py` directly |
+| ~~**Any FastAPI-level test (`TestClient`)**~~ **(RESOLVED — CR-1/CR-5)** | was: zero hits for `TestClient` | `tests/test_api_auth.py` now has 40 HTTP-level tests covering auth, roles, CSRF, the full create→import→analyse→approve→execute→report flow, upload caps, and parse errors |
 | **Persistence beyond the process lifetime** | `ASSESSMENTS: dict[str, Assessment] = {}` at module scope in `api.py` | Restarting the server during a live demo loses all state. (Raw tool outputs + audit log *do* survive on disk; the in-memory Assessment index does not.) |
 | **Export formats besides PDF** | Only `report.generate()` → PDF | No JSON/CSV export for a SIEM/ticketing handoff |
 | **Retest / change comparison between two assessments** | No diff logic anywhere | Can't show "this was fixed since last scan" |
@@ -181,9 +180,9 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [ ] E6. Basic backup story for `data/audit.log` (it's the one thing that can't be regenerated)
 
 ### F. Testing and Reliability
-- [ ] F1. `tests/test_api.py` using FastAPI `TestClient`: create → import → analyse → approve → execute → report, through real HTTP, not direct orchestrator calls
+- [x] F1. FastAPI `TestClient` coverage of create → import → analyse → approve → execute → report through real HTTP *(done — CR-5, landed in `tests/test_api_auth.py` rather than a separate `test_api.py`)*
 - [ ] F2. Negative-path API tests: malformed JSON body, missing required field, wrong content-type on upload, oversized upload (once B2 lands)
-- [x] F3. Auth tests once B1 lands *(done — `tests/test_auth.py`, `tests/test_api_auth.py`)*: unauthenticated request rejected, wrong token rejected, `by`/`decided_by` reflects the authenticated identity not a client-supplied string
+- [x] F3. Auth tests once B1 lands *(done — `tests/test_accounts.py`, `tests/test_api_auth.py`)*: unauthenticated request rejected, wrong credentials rejected, `by`/`decided_by` reflects the authenticated identity not a client-supplied string
 - [ ] F4. Concurrency test: two simultaneous `run_step` calls on the same assessment don't corrupt `a.plan`/`a.runs` (today nothing guards against a race; low risk at hackathon scale, real at production scale)
 - [ ] F5. Accessibility test pass (axe-core or manual) once C1–C2 land
 - [ ] F6. Load/perf sanity: confirm report generation stays fast with 100+ findings (currently only tested with the ~14-finding fixture set)
@@ -238,7 +237,7 @@ Explicitly **not** recommended: adding more LLM calls for their own sake, a chat
 
 | # | Test | Type | Currently exists? |
 |---|---|---|---|
-| T1 | Full create→report flow via `TestClient`, not direct orchestrator calls | API/integration | ⬜ No |
+| T1 | Full create→report flow via `TestClient`, not direct orchestrator calls | API/integration | ✅ Yes (`test_analyst_can_request_but_not_decide_or_execute_approval`, `test_import_and_report_are_attributed`) |
 | T2 | Upload >size-cap file → 413 | API, negative | ✅ Yes (`test_oversized_import_rejected_with_413_not_buffered`) |
 | T3 | Upload a `.xml`-named file containing JSON → clean error, not a stack trace | API, negative | ✅ Yes (`test_malformed_import_body_is_a_clean_400_not_a_500`) |
 | T4 | Unauthenticated request → 401 | API, auth | ✅ Yes (`test_api_auth.py`, parametrized over every POST route + a meta-test) |
@@ -268,7 +267,7 @@ doesn't silently regress on the next UI edit.
 | ✅ **DONE** — CR-2 | Upload size + type cap | Read the body in capped chunks, rejecting >25MB with 413 before it's ever written to disk; a file that doesn't parse as its declared tool's format now 400s with a clear reason instead of a raw-exception 500 | Prevents memory-exhaustion DoS on a public-facing demo instance | A malformed/huge upload fails fast and cleanly | (413/400 text surfaces via the existing `alert()` on import failure) | `_read_upload_capped` + a parse-error catch in `api.import_result` | N/A | Closes an unbounded-memory gap | None | 30MB upload → 413; a JSON file labeled `.nessus` → 400, not a stack trace |
 | ✅ **DONE** — CR-3 | Async scan execution + status polling | `Orchestrator.run_step` split into `start_step` (sync, marks 'running') + `finish_step` (the actual blocking scan); API schedules `finish_step` as a `BackgroundTask` and adds `GET /assessments/{id}/runs/{run_id}`; UI polls every 1.5s while `running` | PS §5.3 explicitly requires "monitor running jobs" — today it's un-demonstrable | Judges can watch a scan go pending→running→done live | Poll loop in `runStep()`/`pollRun()`, step card re-renders on each refresh | `BackgroundTasks`, per-assessment lock guarding the shared `ToolRun`/`PlanStep` mutation | N/A | Low (internal only) | None | Click "Approve & run," UI shows "running" immediately, updates to "done" without a page reload, request returns immediately rather than hanging. `execute_approval` (Metasploit) is still synchronous -- deliberately deferred, it's gated/rare, not the demoable "monitor running jobs" path. |
 | CR-4 | Committed sample PDF report | Generate a sample report (already working via `demo.py`) and commit it to a tracked path (`docs/sample_report.pdf`), refreshed whenever report.py changes meaningfully | PS §9.3 deliverable — currently only producible, not present in the repo | Judges can open the PDF directly from the repo without running anything | N/A | N/A | N/A | N/A | None | File exists at a tracked path, opens cleanly, reflects current report.py output |
-| CR-5 | API-level test suite (`TestClient`) | Cover the full create→import→analyse→approve→execute→report flow through real HTTP | Zero current coverage of the actual demo-time code path (routing, serialization, file upload, error responses) | Confidence the live demo's actual code path is tested, not just the library underneath it | N/A | N/A | N/A | Surfaces auth/upload bugs before judges do | CR-1, CR-2 (to test the new guards) | `pytest tests/test_api.py` green, covers every route in `api.py` |
+| ✅ **DONE** — CR-5 | API-level test suite (`TestClient`) | Cover the full create→import→analyse→approve→execute→report flow through real HTTP | Zero current coverage of the actual demo-time code path (routing, serialization, file upload, error responses) | Confidence the live demo's actual code path is tested, not just the library underneath it | N/A | N/A | N/A | Surfaces auth/upload bugs before judges do | CR-1, CR-2 | `tests/test_api_auth.py` (40 HTTP-level tests, grown alongside CR-1/2/3) already covers this: `test_analyst_can_request_but_not_decide_or_execute_approval` is create→import→analyse→approve→execute end-to-end over real HTTP; `test_import_and_report_are_attributed` covers import→report; CR-2/CR-3's own tests cover the upload-cap, parse-error, and async-run paths. No separate `test_api.py` was needed -- it grew inside the file CR-1 started. |
 
 ### Tier 2 — High Priority
 
