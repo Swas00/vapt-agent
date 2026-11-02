@@ -965,3 +965,80 @@ test('static app buttons are bound for motion at load', async () => {
     assert.equal(ui.$(sel).dataset.fxBound, '1', `${sel} not bound`);
   }
 });
+
+// ---- accessibility pass (C1/F5) ------------------------------------------------------------------
+// Not axe-core (no new dependency for a hackathon submission) -- a direct structural audit of the
+// property a real keyboard/screen-reader pass actually depends on: every clickable control is a
+// native element (focusable and Enter/Space-operable by the browser itself, with no custom JS
+// needed to replicate that), and every form control has a programmatically associated name.
+
+test('every element with a click handler is a native, keyboard-operable element (button/a), never a bare div or span', async () => {
+  const f = { id: 'raw-1', title: 'SQLi', asset: '10.10.10.5', severity: 'high', priority: 'P2',
+             status: 'suspected', validation_status: 'not_validated', confidence: 0.5, risk_score: 50,
+             source_tools: ['zap'], cve: [], cwe: [], owasp: [], mitre_attack: [], merged_from: [],
+             remediation_status: 'open', remediation_updated_by: '', analyst_marked_false_positive: null,
+             analyst_fp_set_by: '' };
+  const runningStep = { id: 'step-1', tool: 'nmap', target: '10.10.10.5', preset: 'discovery',
+                        kind: 'discovery', status: 'running', run_id: 'run-1', rationale: 'because',
+                        origin: 'rules', alternatives_considered: [] };
+  const appr = { id: 'appr-1', finding_id: 'raw-1', asset: '10.10.10.5', action: 'validate',
+                state: 'pending', outcome: '', requested_by: 'alice', decided_by: '', executed_by: '' };
+  const ui = boot({
+    respond: (url) => {
+      if (url === '/login') return { body: whoami('carol', 'admin') };
+      if (url === '/admin/users') return { body: [] };
+      return { body: assessment({ plan: [runningStep], findings: [f], approvals: [appr] }) };
+    },
+  });
+  await settle();
+  await signIn(ui, 'carol');
+  ui.$('#createBtn').click();
+  await settle();
+
+  const clickable = [...ui.$('#app').querySelectorAll('[onclick]')];
+  assert.ok(clickable.length > 3, 'expected several rendered onclick controls to check');
+  for (const el of clickable) {
+    assert.ok(['BUTTON', 'A'].includes(el.tagName),
+      `found a non-native clickable element: <${el.tagName.toLowerCase()}> "${el.textContent.trim()}"`);
+  }
+});
+
+test('every form control in the main app has a programmatically associated accessible name', async () => {
+  const ui = boot({
+    respond: (url) => {
+      if (url === '/login') return { body: whoami('carol', 'admin') };
+      if (url === '/admin/users') return { body: [] };
+      return { body: assessment() };
+    },
+  });
+  await settle();
+  await signIn(ui, 'carol');
+  await settle();   // the admin panel renders on sign-in, before any assessment is created
+
+  const controls = [...ui.$('#mainApp').querySelectorAll('input, textarea, select')];
+  assert.ok(controls.length > 5, 'expected several form controls to check');
+  for (const el of controls) {
+    const hasLabelFor = el.id && ui.w.document.querySelector(`label[for="${el.id}"]`);
+    const hasAriaLabel = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby');
+    const wrappedByLabel = el.closest('label');
+    assert.ok(hasLabelFor || hasAriaLabel || wrappedByLabel,
+      `#${el.id || '(no id)'} (${el.tagName.toLowerCase()}) has no associated accessible name`);
+  }
+});
+
+test('details/summary (alternatives considered) is a native disclosure widget, not a custom one', async () => {
+  const stepWithAlts = { id: 'step-1', tool: 'nmap', target: '10.10.10.5', preset: 'discovery',
+                         kind: 'discovery', status: 'proposed', rationale: 'because', origin: 'rules',
+                         alternatives_considered: [{ tool: 'nikto', target: 'x', preset: 'default', note: 'also considered' }] };
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment({ plan: [stepWithAlts] }) },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  const details = ui.$('#plan details');
+  assert.ok(details, 'alternatives are rendered as a <details> element');
+  assert.ok(details.querySelector('summary'), 'has a native <summary> toggle');
+});

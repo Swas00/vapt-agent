@@ -461,8 +461,10 @@ void main(void){
     <h2 style="margin-top:0">Admin: accounts</h2>
     <label for="newUserName">New user</label>
     <input id="newUserName" placeholder="username" />
-    <input id="newUserPassword" type="password" placeholder="temporary password (12+ chars)" style="margin-top:8px" />
-    <select id="newUserRole" style="width:100%;margin-top:8px;background:#0d0906;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
+    <input id="newUserPassword" type="password" placeholder="temporary password (12+ chars)"
+           aria-label="Temporary password" style="margin-top:8px" />
+    <select id="newUserRole" aria-label="Role"
+           style="width:100%;margin-top:8px;background:#0d0906;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
       <option value="viewer">viewer</option>
       <option value="analyst" selected>analyst</option>
       <option value="lead">lead</option>
@@ -476,11 +478,11 @@ void main(void){
 <main id="mainApp" hidden>
   <div class="col" id="left">
     <div class="card">
-      <label>Analyst request</label>
+      <label for="request">Analyst request</label>
       <textarea id="request" placeholder="e.g. Assess the lab web application and its host for common vulnerabilities before our client demo.">Assess the lab target for common network and web vulnerabilities ahead of the demo.</textarea>
-      <label>Authorized targets (comma-separated)</label>
+      <label for="targets">Authorized targets (comma-separated)</label>
       <input id="targets" placeholder="10.10.10.5, app.lab.local" value="10.10.10.5" />
-      <label>Exclusions (comma-separated, optional)</label>
+      <label for="exclusions">Exclusions (comma-separated, optional)</label>
       <input id="exclusions" placeholder="10.10.10.5:3389" />
       <label class="row"><input type="checkbox" id="attest" style="width:auto" checked /> &nbsp;I attest these are organizer-provided lab targets</label>
       <label class="row"><input type="checkbox" id="allowActive" style="width:auto" /> &nbsp;Allow active validation (still requires per-finding approval)</label>
@@ -495,7 +497,7 @@ void main(void){
 
     <h2>Import a tool result</h2>
     <div class="card">
-      <label>Tool</label>
+      <label for="importTool">Tool</label>
       <select id="importTool" style="width:100%;background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
         <option value="nessus">Nessus (.nessus)</option>
         <option value="openvas">OpenVAS/Greenbone (XML)</option>
@@ -503,7 +505,8 @@ void main(void){
         <option value="zap">OWASP ZAP (JSON)</option>
         <option value="burp">Burp Suite (issue XML)</option>
       </select>
-      <input type="file" id="importFile" style="margin-top:8px" />
+      <label for="importFile" style="margin-top:8px;display:block">File</label>
+      <input type="file" id="importFile" />
       <button id="importBtn" style="margin-top:8px">Import</button>
     </div>
 
