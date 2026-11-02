@@ -231,6 +231,55 @@ test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials a
   assert.equal(ui.csrfOf(loginCall), undefined, 'no session exists yet when logging in');
 });
 
+test('"Load audit trail" fetches the scoped audit log and renders the chain verdict', async () => {
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (url === '/assessments' && opts.method === 'POST') return { body: assessment() };
+      if (url === '/audit?assessment_id=asm-1') {
+        return { body: { ok: true, message: '3 entries, chain intact', entries: [
+          { seq: 1, ts: '2024-01-01T00:00:00', actor: 'alice', action: 'assessment.create',
+            details: { assessment: 'asm-1', targets: ['10.10.10.5'] } },
+        ] } };
+      }
+      return { body: assessment() };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#auditBtn').click();
+  await settle();
+
+  assert.ok(ui.calls.some((c) => c.url === '/audit?assessment_id=asm-1'));
+  const html = ui.$('#auditResult').innerHTML;
+  assert.match(html, /chain intact/);
+  assert.match(html, /assessment\.create/);
+  assert.match(html, /alice/);
+});
+
+test('"Load audit trail" shows a chain-broken verdict distinctly', async () => {
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (url === '/assessments' && opts.method === 'POST') return { body: assessment() };
+      if (url === '/audit?assessment_id=asm-1') {
+        return { body: { ok: false, message: 'chain broken at seq 2', entries: [] } };
+      }
+      return { body: assessment() };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#auditBtn').click();
+  await settle();
+
+  assert.match(ui.$('#auditResult').innerHTML, /chain broken/);
+});
+
 test('"Compare" fetches the diff endpoint and renders new/fixed/persisting', async () => {
   const ui = boot({
     respond: (url, opts) => {

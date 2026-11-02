@@ -518,6 +518,12 @@ void main(void){
       <button id="diffBtn" class="ghost" style="margin-top:8px">Compare</button>
     </div>
     <div id="diffResult"></div>
+
+    <h2>Audit trail (replay)</h2>
+    <div class="card">
+      <button id="auditBtn" class="ghost">Load audit trail for this assessment</button>
+    </div>
+    <div id="auditResult"></div>
   </div>
 </main>
 </div>
@@ -907,6 +913,31 @@ $('#diffBtn').onclick = busyEntry($('#diffBtn'), async () => {
   if (!beforeId) return showError('Enter the earlier assessment ID to compare against');
   const d = await api(`/assessments/${currentId}/diff/${beforeId}`);
   renderDiff(d);
+});
+
+// Replays this assessment's slice of the hash-chained audit log, oldest first, so a judge can
+// step through exactly what the agent decided and why, with the chain's own integrity verdict
+// shown alongside it -- "attributable" as something inspectable, not just a backend property.
+function renderAudit(data) {
+  const badge = data.ok ? 'sev-low' : 'sev-critical';
+  const rows = (data.entries || []).map(e => {
+    const details = Object.entries(e.details || {}).filter(([k]) => k !== 'assessment')
+      .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join('  ');
+    return `<div class="mono" style="padding:3px 0;border-bottom:1px dashed var(--line)">
+      #${esc(e.seq)} [${esc(e.ts)}] <b>${esc(e.actor)}</b> ${esc(e.action)} ${esc(details)}</div>`;
+  }).join('') || '<div class="mono">No audit entries for this assessment yet.</div>';
+  $('#auditResult').innerHTML = `
+    <div class="card">
+      <div class="row"><span class="pill ${badge}">${esc(data.ok ? 'chain intact' : 'chain broken')}</span>
+        <span class="mono">${esc(data.message)}</span></div>
+      ${rows}
+    </div>`;
+}
+
+$('#auditBtn').onclick = busyEntry($('#auditBtn'), async () => {
+  if (!currentId) return showError('Start or select an assessment first');
+  const data = await api(`/audit?assessment_id=${currentId}`);
+  renderAudit(data);
 });
 
 function render(){
