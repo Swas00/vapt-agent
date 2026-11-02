@@ -719,6 +719,61 @@ def test_healthz_is_public_and_requires_no_session(env):
     assert r.json() == {"status": "ok"}
 
 
+# ---- F2: negative-path API tests ----------------------------------------------------------------
+
+def test_malformed_json_body_is_422_not_500(env):
+    hdr = session(env, "alice")
+    r = env.client.post("/assessments", content="{not valid json",
+                        headers={**hdr, "Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+def test_missing_required_field_is_422(env):
+    hdr = session(env, "alice")
+    r = env.client.post("/assessments", json={"scope": CREATE_BODY["scope"]}, headers=hdr)  # no "request"
+    assert r.status_code == 422
+
+
+def test_wrong_type_for_a_field_is_422(env):
+    hdr = session(env, "alice")
+    bad = {**CREATE_BODY, "scope": {**CREATE_BODY["scope"], "targets": "10.10.10.5"}}  # must be a list
+    r = env.client.post("/assessments", json=bad, headers=hdr)
+    assert r.status_code == 422
+
+
+def test_import_with_no_file_field_at_all_is_422(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.post(f"/assessments/{a['id']}/import/nessus", headers=hdr)  # no multipart body
+    assert r.status_code == 422
+
+
+def test_import_to_an_unregistered_tool_name_is_a_clean_400(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.post(f"/assessments/{a['id']}/import/not-a-real-tool", headers=hdr,
+                        files={"file": ("x.xml", b"<a/>", "application/xml")})
+    assert r.status_code == 400
+
+
+def test_decision_query_param_missing_is_422(env):
+    """`approved: bool` on /plan/{step}/decision has no default -- omitting it entirely must be a
+    clean 422, not a 500 from FastAPI trying to coerce a missing value."""
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    step = a["plan"][0]["id"]
+    r = env.client.post(f"/assessments/{a['id']}/plan/{step}/decision", headers=hdr)
+    assert r.status_code == 422
+
+
+def test_approved_query_param_non_boolean_is_422(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    step = a["plan"][0]["id"]
+    r = env.client.post(f"/assessments/{a['id']}/plan/{step}/decision?approved=not-a-bool", headers=hdr)
+    assert r.status_code == 422
+
+
 # ---- startup behaviour ------------------------------------------------------------------------------
 
 def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, monkeypatch, caplog):
