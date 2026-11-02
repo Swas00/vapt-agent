@@ -36,7 +36,7 @@ function assessment(overrides = {}) {
 /** Boot the real page. `respond(url, opts)` returns {status, body} for each fetch; every call is
  *  recorded in `calls`. By default GET /whoami -> 401 (signed out), matching a fresh page load. */
 function boot({ respond, signedInAs = null } = {}) {
-  const calls = [], alerts = [], downloads = [];
+  const calls = [], alerts = [], downloads = [], eventSources = [];
   const defaultRespond = (url, opts) => {
     if (url === '/whoami') {
       return signedInAs ? { body: whoami(signedInAs.username, signedInAs.role, signedInAs.must_change_password) }
@@ -53,6 +53,12 @@ function boot({ respond, signedInAs = null } = {}) {
       w.URL.createObjectURL = () => 'blob:test';
       w.URL.revokeObjectURL = () => {};
       w.HTMLAnchorElement.prototype.click = function () { downloads.push({ download: this.download }); };
+      // jsdom has no real EventSource -- a minimal stand-in so openEventStream()/closeEventStream()
+      // (CA-1) exercise their real logic; tests drive it by calling .onmessage(...) themselves.
+      w.EventSource = class {
+        constructor(url) { this.url = url; this.onmessage = null; this.closed = false; eventSources.push(this); }
+        close() { this.closed = true; }
+      };
       w.fetch = async (url, opts = {}) => {
         calls.push({ url, opts });
         const r = (respond && respond(url, opts)) ?? defaultRespond(url, opts);
@@ -65,7 +71,7 @@ function boot({ respond, signedInAs = null } = {}) {
   });
   const w = dom.window;
   const $ = (s) => w.document.querySelector(s);
-  return { w, $, calls, alerts, downloads, csrfOf: (c) => (c.opts.headers || {})['X-CSRF-Token'] };
+  return { w, $, calls, alerts, downloads, eventSources, csrfOf: (c) => (c.opts.headers || {})['X-CSRF-Token'] };
 }
 
 async function signIn(ui, username = 'alice', password = 'correct-horse-1') {
@@ -366,6 +372,61 @@ test('a failed request shows a dismissible toast instead of a blocking alert()',
 
   toast.querySelector('.toast-close').click();
   assert.equal(ui.$('#toastStack').children.length, 0, 'dismiss button removes the toast');
+});
+
+test('starting an assessment opens an SSE stream that live-appends new events', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+
+  assert.equal(ui.eventSources.length, 1);
+  assert.equal(ui.eventSources[0].url, '/assessments/asm-1/stream');
+  assert.ok(typeof ui.eventSources[0].onmessage === 'function');
+
+  ui.eventSources[0].onmessage({
+    data: JSON.stringify({ level: 'decision', message: 'Live-streamed update', ts: '2024-01-01T00:00:01' }),
+    lastEventId: '5',
+  });
+  assert.match(ui.$('#events').innerHTML, /Live-streamed update/);
+});
+
+test('the SSE stream skips replaying an event already known when it connected', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') }
+                     : { body: assessment({ events: [{ level: 'info', message: 'Already rendered', ts: '2024-01-01T00:00:00' }] }) },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();                 // skipBelow is captured here as current.events.length === 1
+
+  ui.eventSources[0].onmessage({                           // index 0 -- the event already known
+    data: JSON.stringify({ level: 'info', message: 'Already rendered', ts: '2024-01-01T00:00:00' }), lastEventId: '0',
+  });
+  assert.equal(ui.$('#events').innerHTML.match(/Already rendered/g).length, 1, 'not rendered twice');
+
+  ui.eventSources[0].onmessage({                           // index 1 -- genuinely new
+    data: JSON.stringify({ level: 'decision', message: 'Genuinely new', ts: '2024-01-01T00:00:01' }), lastEventId: '1',
+  });
+  assert.match(ui.$('#events').innerHTML, /Genuinely new/);
+});
+
+test('signing out closes the SSE stream', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#signOutBtn').click();
+  await settle();
+
+  assert.equal(ui.eventSources[0].closed, true);
 });
 
 test('signing out clears state and shows the login form again', async () => {

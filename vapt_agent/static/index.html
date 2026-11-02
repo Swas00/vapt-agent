@@ -523,7 +523,7 @@ void main(void){
 </div>
 <script>
 const $ = s => document.querySelector(s);
-let currentId = null, current = null;
+let currentId = null, current = null, eventStream = null;
 
 // Finding titles, tool output, and event messages all ultimately trace back to scan results --
 // i.e. to the target system being assessed, not to this app's own operator. Nothing from there
@@ -595,12 +595,43 @@ function applyAuthState(body) {
   $('#mainApp').hidden = false;
 }
 
+function closeEventStream() {
+  if (eventStream) { eventStream.close(); eventStream = null; }
+}
+
+// Live-updates #events from the SSE stream (CA-1) as the orchestrator appends them -- notably
+// while a CR-3 background scan is still running -- instead of only catching up on the next
+// refresh(). EventSource reconnects on its own if the connection drops or the server-side
+// max_seconds window ends, so nothing here needs to handle that.
+function openEventStream(aid) {
+  closeEventStream();
+  if (!window.EventSource) return;   // very old browser -- #events still catches up via refresh()
+  // The stream always replays everything server-side first, including events this page already
+  // rendered from the create response -- skip any index below what was already known at connect
+  // time rather than rendering those again.
+  const skipBelow = (current && current.events) ? current.events.length : 0;
+  eventStream = new EventSource(`/assessments/${aid}/stream`);
+  eventStream.onmessage = (ev) => {
+    if (aid !== currentId) return;
+    const idx = Number(ev.lastEventId);
+    if (Number.isFinite(idx) && idx < skipBelow) return;
+    let e;
+    try { e = JSON.parse(ev.data); } catch { return; }
+    if (current) (current.events = current.events || []).push(e);
+    const div = document.createElement('div');
+    div.className = `evt ${e.level || 'info'}`;
+    div.textContent = `[${(e.ts || '').split('T')[1]?.slice(0, 8) || ''}] ${e.message || ''}`;
+    $('#events').prepend(div);
+  };
+}
+
 function setSignedOut(message) {
   csrfToken = ''; currentUsername = ''; currentRole = '';
   $('#authCard').hidden = false; $('#pwChangeCard').hidden = true;
   $('#signedInBar').hidden = true; $('#adminCard').hidden = true; $('#mainApp').hidden = true;
   $('#authStatus').textContent = message || 'Not signed in.';
   currentId = null; current = null;
+  closeEventStream();
   $('#loginPassword').value = '';
 }
 
@@ -744,6 +775,7 @@ $('#createBtn').onclick = busyEntry($('#createBtn'), async () => {
   current = await api('/assessments', {method:'POST', body: JSON.stringify(body)});
   currentId = current.id;
   render();
+  openEventStream(currentId);
 });
 
 async function refresh(){ current = await api(`/assessments/${currentId}`); render(); }
