@@ -98,12 +98,14 @@ closes). From a script: `curl -H "Authorization: Bearer $TOKEN" -X POST ...`. A 
 `VAPT_ANALYST_TOKENS` stops the server at startup rather than silently running open. Failed attempts are
 audited (throttled per client, and the presented token is never recorded).
 
-**Tests** (197: scope enforcement, all 6 parsers, correlation/dedup, risk scoring & CVSS-vector parsing,
-candidate-based planning + bounded LLM arbitration (incl. a prompt-injection test), MITRE/CSF tagging,
-report generation, full orchestrator pipeline, approval gating, live nmap/nikto subprocess runs, ZAP and
-Metasploit wiring, **authentication** — config parsing, constant-time comparison, a meta-test that fails
-if any POST route lacks the guard, and HTTP-level tests through FastAPI's `TestClient` — plus a jsdom suite
-that executes the real web page):
+**Tests** (304 Python + 51 jsdom: scope enforcement, all 6 parsers, correlation/dedup, risk scoring &
+CVSS-vector parsing (incl. boundary cases), candidate-based planning + bounded LLM arbitration (incl. a
+prompt-injection test), MITRE/CSF tagging, report generation (incl. a load test), full orchestrator
+pipeline (incl. concurrency/race tests and live scan cancellation), approval gating, live nmap/nikto
+subprocess runs, ZAP and Metasploit wiring, **authentication** — config parsing, constant-time comparison,
+a meta-test that fails if any POST route lacks the guard, negative-path/malformed-input tests, and
+HTTP-level tests through FastAPI's `TestClient` — plus a jsdom suite that executes the real web page,
+including structural keyboard-nav/accessible-name regression tests):
 
 ```bash
 .venv/bin/python -m pytest -q
