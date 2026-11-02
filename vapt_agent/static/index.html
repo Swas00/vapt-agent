@@ -48,6 +48,11 @@
   button.ghost:hover:not(:disabled)::after { border-color:rgba(253,186,116,.6); }
   button.ghost:hover:not(:disabled) { background:rgba(249,115,22,.16); box-shadow:none; }
   button:disabled { opacity:.4; cursor:not-allowed; }
+  button.is-busy { color:transparent; }
+  button.is-busy::after { content:""; position:absolute; left:50%; top:50%; width:14px; height:14px;
+            margin:-7px 0 0 -7px; border:2px solid rgba(26,15,2,.35); border-top-color:#1a0f02;
+            border-radius:50%; animation:btn-spin .6s linear infinite; }
+  @keyframes btn-spin { to { transform:rotate(360deg); } }
   .btn-ripple { position:absolute; width:6px; height:6px; border-radius:50%; left:0; top:0;
                 background:rgba(255,255,255,.55); transform:translate(-50%,-50%) scale(0); pointer-events:none;
                 animation:btn-ripple .65s cubic-bezier(.16,1,.3,1) forwards; z-index:-1; }
@@ -541,6 +546,18 @@ function entry(fn) {
   };
 }
 
+// Same as entry(), but also disables `btn` and shows a spinner for the call's duration -- so a
+// click gives immediate feedback ("did that register?") instead of the button just sitting there
+// until the response lands.
+function busyEntry(btn, fn) {
+  return async (...args) => {
+    btn.disabled = true; btn.classList.add('is-busy');
+    try { return await fn(...args); }
+    catch (e) { if (!(e instanceof HandledError)) throw e; }
+    finally { btn.disabled = false; btn.classList.remove('is-busy'); }
+  };
+}
+
 function applyAuthState(body) {
   // body: {username, role, must_change_password, csrf_token}. Every value rendered below is
   // server-supplied (username is validated server-side to [A-Za-z0-9._-]; role is one of four
@@ -584,19 +601,20 @@ async function signIn() {
   applyAuthState(await res.json());
 }
 
-$('#signInBtn').onclick = entry(signIn);
-$('#loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+const doSignIn = busyEntry($('#signInBtn'), signIn);
+$('#signInBtn').onclick = doSignIn;
+$('#loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSignIn(); });
 
-$('#signOutBtn').onclick = entry(async () => {
+$('#signOutBtn').onclick = busyEntry($('#signOutBtn'), async () => {
   await fetch('/logout', { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
   setSignedOut('Signed out.');
 });
-$('#signOutAllBtn').onclick = entry(async () => {
+$('#signOutAllBtn').onclick = busyEntry($('#signOutAllBtn'), async () => {
   await fetch('/logout-all', { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
   $('#whoami').textContent += ' (other sessions signed out)';
 });
 
-$('#pwChangeBtn').onclick = entry(async () => {
+$('#pwChangeBtn').onclick = busyEntry($('#pwChangeBtn'), async () => {
   const current_password = $('#pwCurrent').value, new_password = $('#pwNew').value;
   if (new_password !== $('#pwNewConfirm').value) {
     $('#pwChangeStatus').textContent = 'New password and confirmation do not match.'; return;
@@ -658,27 +676,32 @@ async function loadUserList() {
     <div class="row" style="justify-content:space-between;border-bottom:1px dashed var(--line);padding:4px 0">
       <span class="mono">${esc(u.username)} · ${esc(u.role)}${u.disabled ? ' · disabled' : ''}${u.must_change_password ? ' · pending-reset' : ''}</span>
       <span class="row">
-        <button class="ghost" onclick="adminAction('${esc(u.username)}','unlock')">Unlock</button>
-        <button class="ghost" onclick="adminAction('${esc(u.username)}','reset-password')">Reset pw</button>
-        <button class="ghost" onclick="adminAction('${esc(u.username)}','${u.disabled ? 'enable' : 'disable'}')">${u.disabled ? 'Enable' : 'Disable'}</button>
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','unlock',this)">Unlock</button>
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','reset-password',this)">Reset pw</button>
+        <button class="ghost" onclick="adminAction('${esc(u.username)}','${u.disabled ? 'enable' : 'disable'}',this)">${u.disabled ? 'Enable' : 'Disable'}</button>
       </span>
     </div>`).join('') || '<div class="mono">No other users yet.</div>';
 }
 
-const adminAction = entry(async (username, action) => {
-  const path = action === 'enable' ? `/admin/users/${username}/disable?disabled=false`
-             : action === 'disable' ? `/admin/users/${username}/disable?disabled=true`
-             : `/admin/users/${username}/${action}`;
-  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) { $('#adminStatus').textContent = body.detail || 'Action failed.'; return; }
-  $('#adminStatus').textContent = body.temporary_password
-    ? `New temporary password for ${username} (relay this out-of-band, shown once): ${body.temporary_password}`
-    : 'Done.';
-  loadUserList();
+const adminAction = entry(async (username, action, btn) => {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    const path = action === 'enable' ? `/admin/users/${username}/disable?disabled=false`
+               : action === 'disable' ? `/admin/users/${username}/disable?disabled=true`
+               : `/admin/users/${username}/${action}`;
+    const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: authHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { $('#adminStatus').textContent = body.detail || 'Action failed.'; return; }
+    $('#adminStatus').textContent = body.temporary_password
+      ? `New temporary password for ${username} (relay this out-of-band, shown once): ${body.temporary_password}`
+      : 'Done.';
+    loadUserList();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
 });
 
-$('#createUserBtn').onclick = entry(async () => {
+$('#createUserBtn').onclick = busyEntry($('#createUserBtn'), async () => {
   const username = $('#newUserName').value.trim(), password = $('#newUserPassword').value,
         role = $('#newUserRole').value;
   const res = await fetch('/admin/users', { method: 'POST', credentials: 'same-origin',
@@ -692,7 +715,7 @@ $('#createUserBtn').onclick = entry(async () => {
 
 function split(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
 
-$('#createBtn').onclick = entry(async () => {
+$('#createBtn').onclick = busyEntry($('#createBtn'), async () => {
   const body = {
     request: $('#request').value,
     scope: {
@@ -710,12 +733,12 @@ $('#createBtn').onclick = entry(async () => {
 
 async function refresh(){ current = await api(`/assessments/${currentId}`); render(); }
 
-$('#analyseBtn').onclick = entry(async () => {
+$('#analyseBtn').onclick = busyEntry($('#analyseBtn'), async () => {
   if(!currentId) return;
   await api(`/assessments/${currentId}/analyse`, {method:'POST'});
   await refresh();
 });
-$('#reportBtn').onclick = entry(async () => {
+$('#reportBtn').onclick = busyEntry($('#reportBtn'), async () => {
   if(!currentId) return;
   // The endpoint is a POST (it writes the PDF and audits the generation), so a bare window.open --
   // a GET with no way to attach the bearer header -- can't call it. Fetch the PDF and hand the
@@ -731,7 +754,7 @@ $('#reportBtn').onclick = entry(async () => {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 
-$('#importBtn').onclick = entry(async () => {
+$('#importBtn').onclick = busyEntry($('#importBtn'), async () => {
   if(!currentId) return showError('Start an assessment first');
   const f = $('#importFile').files[0];
   if(!f) return showError('Choose a file');
@@ -754,33 +777,57 @@ async function pollRun(aid, runId) {
   }
 }
 
-const runStep = entry(async (stepId) => {
-  const aid = currentId;
-  await api(`/assessments/${aid}/plan/${stepId}/decision?approved=true`, {method:'POST'});
-  const run = await api(`/assessments/${aid}/plan/${stepId}/run`, {method:'POST'});
-  await refresh();                 // shows the step as 'running' immediately
-  await pollRun(aid, run.id);
-  if (aid === currentId) await refresh();   // shows the final done/failed state
+// Each handler below takes the clicked button as its last arg (passed as `this` from the inline
+// onclick="..." attribute) purely to show a busy spinner for the call's duration; render() usually
+// replaces the element anyway on success, so the finally-block re-enable mostly matters when the
+// call fails and the same button sticks around.
+const runStep = entry(async (stepId, btn) => {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    const aid = currentId;
+    await api(`/assessments/${aid}/plan/${stepId}/decision?approved=true`, {method:'POST'});
+    const run = await api(`/assessments/${aid}/plan/${stepId}/run`, {method:'POST'});
+    await refresh();                 // shows the step as 'running' immediately
+    await pollRun(aid, run.id);
+    if (aid === currentId) await refresh();   // shows the final done/failed state
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
 });
-const rejectStep = entry(async (stepId) => {
-  await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false`, {method:'POST'});
-  await refresh();
+const rejectStep = entry(async (stepId, btn) => {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false`, {method:'POST'});
+    await refresh();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
 });
 
-const requestApproval = entry(async (findingId) => {
+const requestApproval = entry(async (findingId, btn) => {
   // Built here, from the current in-memory finding, rather than threaded through an inline
   // onclick="..." attribute -- a finding's title/asset are scanner-derived text (not something
   // this app controls), so they must never be hand-spliced into an HTML attribute string.
-  const f = (current.findings || []).find(x => x.id === findingId);
-  const action = f ? `Human-approved check-mode validation of ${f.title} on ${f.asset}` : 'Validate finding';
-  await api(`/assessments/${currentId}/approvals`, {method:'POST', body: JSON.stringify({finding_id: findingId, action})});
-  await refresh();
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    const f = (current.findings || []).find(x => x.id === findingId);
+    const action = f ? `Human-approved check-mode validation of ${f.title} on ${f.asset}` : 'Validate finding';
+    await api(`/assessments/${currentId}/approvals`, {method:'POST', body: JSON.stringify({finding_id: findingId, action})});
+    await refresh();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
 });
-const decideApproval = entry(async (id, approved) => {
+const decideApproval = entry(async (id, approved, btn) => {
   const reason = approved ? 'Analyst approved controlled validation.' : prompt('Reason for denial?') || 'denied';
-  await api(`/assessments/${currentId}/approvals/${id}/decision?approved=${approved}&reason=${encodeURIComponent(reason)}`, {method:'POST'});
-  if (approved) await api(`/assessments/${currentId}/approvals/${id}/execute`, {method:'POST'});
-  await refresh();
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    await api(`/assessments/${currentId}/approvals/${id}/decision?approved=${approved}&reason=${encodeURIComponent(reason)}`, {method:'POST'});
+    if (approved) await api(`/assessments/${currentId}/approvals/${id}/execute`, {method:'POST'});
+    await refresh();
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
 });
 
 function render(){
@@ -808,8 +855,8 @@ function render(){
           ${esc(alt.tool)} → ${esc(alt.target)} (${esc(alt.preset)})${alt.keep===false ? ' — not run: ' : ' — '}${esc(alt.reason||alt.note||'')}</div>`).join('')}
       </details>` : ''}
       ${s.status==='proposed' ? `<div class="row" style="margin-top:6px">
-        <button onclick="runStep('${esc(s.id)}')">Approve &amp; run</button>
-        <button class="ghost" onclick="rejectStep('${esc(s.id)}')">Reject</button></div>` : ''}
+        <button onclick="runStep('${esc(s.id)}',this)">Approve &amp; run</button>
+        <button class="ghost" onclick="rejectStep('${esc(s.id)}',this)">Reject</button></div>` : ''}
     </div>`).join('') || '<div class="mono">No steps yet.</div>';
 
   $('#events').innerHTML = (current.events||[]).slice().reverse().map(e =>
@@ -830,7 +877,7 @@ function render(){
       ${refs.length ? `<div class="mono" style="margin-top:3px">refs: ${esc(refs.join(', '))}</div>` : ''}
       ${(f.mitre_attack||[]).length ? `<div class="mono" style="margin-top:3px; color:#e8b465">ATT&amp;CK (indicative): ${esc(f.mitre_attack.join('; '))}</div>` : ''}
       ${(f.severity==='critical'||f.severity==='high') && f.validation_status==='not_validated' && currentRole !== 'viewer' ?
-        `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}')">Request active-validation approval</button>` : ''}
+        `<button class="ghost" style="margin-top:6px" onclick="requestApproval('${esc(f.id)}',this)">Request active-validation approval</button>` : ''}
     </div>`;
   }).join('') || '<div class="mono">Run \'Correlate &amp; prioritize\' after scanning/importing.</div>';
 
@@ -844,8 +891,8 @@ function render(){
       <div class="mono">state=${esc(a.state)} outcome=${esc(a.outcome||'-')}
         requested_by=${esc(a.requested_by||'-')} decided_by=${esc(a.decided_by||'-')} executed_by=${esc(a.executed_by||'-')}</div>
       ${a.state==='pending' && canApprove ? `<div class="row" style="margin-top:6px">
-        <button onclick="decideApproval('${esc(a.id)}', true)">Approve &amp; execute</button>
-        <button class="ghost" onclick="decideApproval('${esc(a.id)}', false)">Deny</button></div>` : ''}
+        <button onclick="decideApproval('${esc(a.id)}', true, this)">Approve &amp; execute</button>
+        <button class="ghost" onclick="decideApproval('${esc(a.id)}', false, this)">Deny</button></div>` : ''}
       ${a.state==='pending' && !canApprove ? `<div class="mono" style="margin-top:4px;color:var(--muted)">Awaiting a 'lead' or 'admin' to decide.</div>` : ''}
     </div>`).join('') || '<div class="mono">No approval requests yet.</div>';
 

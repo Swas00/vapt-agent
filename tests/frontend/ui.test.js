@@ -185,6 +185,20 @@ test('successful change-password re-fetches whoami and reveals the app', async (
   assert.equal(ui.$('#pwChangeCard').hidden, true);
 });
 
+test('"Start assessment" shows a busy state while the request is in flight, then clears it', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  assert.equal(ui.$('#createBtn').disabled, true, 'disabled synchronously on click, before the response lands');
+  assert.ok(ui.$('#createBtn').classList.contains('is-busy'));
+  await settle();
+  assert.equal(ui.$('#createBtn').disabled, false, 're-enabled once the request settles');
+  assert.ok(!ui.$('#createBtn').classList.contains('is-busy'));
+});
+
 test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials are same-origin', async () => {
   const ui = boot({
     respond: (url, opts) => {
@@ -471,7 +485,7 @@ test('scanner-derived text and every server-supplied identity render as inert te
   for (const id of ['#plan', '#events', '#findings', '#approvals', '#whoami']) {
     assert.ok(ui.$(id).textContent.includes('<img src=x'), `${id} should show the payload as visible text`);
   }
-  assert.match(ui.$('#findings').innerHTML, /onclick="requestApproval\('raw-1'\)"/);
+  assert.match(ui.$('#findings').innerHTML, /onclick="requestApproval\('raw-1',this\)"/);
 });
 
 test('a hostile username in the admin user list renders as inert text', async () => {
