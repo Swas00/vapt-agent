@@ -619,7 +619,11 @@ async def import_result(assessment_id: str, tool: str, file: UploadFile = File(.
 @app.post("/assessments/{assessment_id}/analyse")
 def analyse(assessment_id: str, principal: Principal = Depends(require_role("analyst"))):
     a = _get(assessment_id)
-    result = orch.analyse(a)
+    # FS-6: every OTHER assessment this process knows about (in-memory, which on a real
+    # deployment also means "every assessment persisted to data/assessments.db since FS-1", not
+    # just ones created this session) is eligible calibration history.
+    history = [other for other in ASSESSMENTS.values() if other.id != a.id]
+    result = orch.analyse(a, history=history)
     _persist(a)
     return result
 

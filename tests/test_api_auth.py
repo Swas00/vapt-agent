@@ -758,6 +758,42 @@ def test_assessment_survives_a_simulated_restart(env):
     assert after["plan"] == before["plan"]
 
 
+# FS-6: confidence calibration against historical validation outcomes, wired through the real
+# /analyse route (api.py supplies every OTHER in-memory assessment as history).
+
+def test_analyse_route_calibrates_against_a_sibling_assessments_validated_findings(env):
+    from vapt_agent import api as api_mod
+    from vapt_agent.calibration import MIN_SAMPLE
+    from vapt_agent.models import Finding
+
+    title = "Default credentials on admin panel"
+
+    # Sibling assessment: MIN_SAMPLE findings of the same signature (title; no CVE), all already
+    # 'validated' by a prior human-approved active-validation run -- the historical signal.
+    a1 = create_assessment(env, "bob")
+    api_mod.ASSESSMENTS[a1["id"]].findings = [
+        Finding(title=title, asset="10.10.10.9", validation_status="validated")
+        for _ in range(MIN_SAMPLE)
+    ]
+    api_mod._persist(api_mod.ASSESSMENTS[a1["id"]])
+
+    # Second, fresh assessment with a raw finding sharing that signature and a low confidence.
+    a2 = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    api_mod.ASSESSMENTS[a2["id"]].raw_findings.append(
+        Finding(title=title, asset="10.10.10.5", confidence=0.3, source_tools=["nikto"]))
+
+    r = env.client.post(f"/assessments/{a2['id']}/analyse", headers=hdr)
+    assert r.status_code == 200
+    matching = [f for f in r.json()["findings"] if f["title"] == title]
+    assert matching
+    f2 = matching[0]
+    assert f2["confidence"] > 0.3
+    assert any("Confidence calibrated" in note for note in f2["inference"])
+    entries = env.entries("analysis.confidence_calibrated")
+    assert entries and entries[-1]["details"]["assessment"] == a2["id"]
+
+
 def test_a_second_process_reading_the_same_db_file_sees_the_assessment(tmp_path):
     """Not through the TestClient fixture's shared monkeypatched store -- construct a second,
     independent AssessmentStore over the same file path, the way a genuinely separate process

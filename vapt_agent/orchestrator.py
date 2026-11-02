@@ -6,7 +6,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from . import correlate, frameworks, planner, risk
+from . import calibration, correlate, frameworks, planner, risk
 from .adapters import registry
 from .adapters.infra import Metasploit
 from .audit import AuditLog
@@ -184,9 +184,23 @@ class Orchestrator:
                                           f"but deferred: {s.skip_reason}"))
 
     # ---- analysis --------------------------------------------------------
-    def analyse(self, a: Assessment) -> Assessment:
+    def analyse(self, a: Assessment, history: list[Assessment] | None = None) -> Assessment:
+        """`history` is an optional list of OTHER assessments (never including `a` itself) whose
+        already-validated findings may calibrate this one's confidence (FS-6). Callers that don't
+        have a history available (direct Orchestrator use, e.g. demo.py) simply omit it -- no
+        calibration happens, same behaviour as before FS-6."""
         a.findings = correlate.correlate(a.raw_findings)
         frameworks.apply(a.findings)
+        if history:
+            hist = calibration.build_history([h for h in history if h.id != a.id])
+            calibrated = [f for f in a.findings if calibration.calibrate(f, hist)]
+            if calibrated:
+                self.audit.append("agent", "analysis.confidence_calibrated", assessment=a.id,
+                                  count=len(calibrated), findings=[f.id for f in calibrated])
+                a.events.append(Event(level="decision",
+                                      message=f"Calibrated confidence for {len(calibrated)} finding(s) "
+                                              "against historical active-validation outcomes from "
+                                              "other assessments."))
         for f in a.findings:
             risk.score(f, a.scope)
         a.findings = risk.rank(a.findings)

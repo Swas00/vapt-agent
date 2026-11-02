@@ -137,6 +137,43 @@ def test_start_step_marks_running_before_finish_step_completes_it(orch, assessme
     assert assessment.runs == [run]         # no stray second ToolRun was appended
 
 
+def test_analyse_calibrates_confidence_from_other_assessments_history(orch, assessment):
+    """FS-6: orchestrator.analyse() accepts an optional `history` of OTHER assessments; a finding
+    whose signature (here, title -- the Nessus fixture's findings carry no CVE) was repeatedly
+    validated elsewhere should have its confidence nudged up and the adjustment logged."""
+    from vapt_agent.models import Assessment, Finding, ScopeModel
+
+    target_title = "Default credentials on admin panel"
+    assessment.raw_findings.append(
+        Finding(title=target_title, asset="10.10.10.5", confidence=0.4, source_tools=["nikto"]))
+
+    other_scope = ScopeModel(targets=["10.10.10.9"], lab_attestation=True)
+    history_assessment = Assessment(request="other", scope=other_scope)
+    # Match on title (this synthetic finding carries no CVE) with enough repeated 'validated'
+    # outcomes elsewhere to clear MIN_SAMPLE.
+    history_assessment.findings = [
+        Finding(title=target_title, asset="10.10.10.9", confidence=0.9, validation_status="validated")
+        for _ in range(4)
+    ]
+
+    orch.analyse(assessment, history=[history_assessment])
+    calibrated = [f for f in assessment.findings if f.title == target_title]
+    assert calibrated
+    f = calibrated[0]
+    assert any("Confidence calibrated" in note for note in f.inference)
+    entry = next(e for e in orch.audit.entries() if e["action"] == "analysis.confidence_calibrated")
+    assert entry["details"]["count"] >= 1
+
+
+def test_analyse_without_history_is_unchanged_from_before_fs6(orch, assessment):
+    """Omitting `history` entirely (every pre-FS-6 caller, e.g. demo.py) must behave exactly as
+    before -- no calibration attempted, no 'analysis.confidence_calibrated' audit entry."""
+    orch.import_result(assessment, "nessus", FIX / "nessus_sample.nessus")
+    orch.analyse(assessment)
+    assert not any(e["action"] == "analysis.confidence_calibrated" for e in orch.audit.entries())
+    assert all(not any("calibrated" in note.lower() for note in f.inference) for f in assessment.findings)
+
+
 def test_scope_blocks_step_run_outside_target(orch, assessment):
     from vapt_agent.models import PlanStep
     bad = PlanStep(tool="nmap", target="8.8.8.8", preset="discovery", rationale="x")
