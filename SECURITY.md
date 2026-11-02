@@ -122,11 +122,14 @@ project's primary defense, applied at three separate layers:
   authorization out-of-band -- that remains a human/process control, same as any pentest.
 - **No fabricated findings, CVEs, or CVSS scores.** Every finding traces to at least one real
   parsed tool output; `risk.py`'s formula is deterministic and reproducible from the same inputs.
-- **No persistent storage across process restarts** (Tier 5 / Future Scope, deliberately deferred
-  -- `ASSESSMENTS: dict[str, Assessment] = {}` is in-memory; raw tool outputs and the audit log do
-  survive on disk, the in-memory assessment index does not). A real multi-session deployment would
-  need this; it is out of scope for this hackathon submission and documented as such rather than
-  silently assumed to exist.
+- **Persistence is a single SQLite file per store, not a managed database.** `Assessment` objects
+  (FS-1, `vapt_agent/store.py`'s `AssessmentStore`) and `Batch` groupings (FS-4) now survive a
+  process restart -- `data/assessments.db` / `data/batches.db`, write-through on every mutating
+  route, reloaded at startup -- the same no-new-service-dependency approach `accounts.py` already
+  used for `auth.db`. What's genuinely still out of scope: multi-instance/horizontal scaling (two
+  processes both writing the same SQLite file is not a design this supports), and a managed
+  database engine in place of SQLite -- neither is needed at this project's actual scale; see
+  `docs/DEPLOYMENT.md`.
 - **Standards alignment (NIST SP 800-115, OWASP Top 10, CVE/CVSS/CWE, MITRE ATT&CK, NIST CSF 2.0)
   is disclosed as alignment, not compliance** -- consistent with PS-1 §8's own language that using
   these standards "does not, by itself, establish compliance."

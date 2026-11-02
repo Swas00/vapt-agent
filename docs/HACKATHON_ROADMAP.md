@@ -105,9 +105,9 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 | Feature | What's there | What's missing |
 |---|---|---|
 | ~~Scan orchestration "monitor running jobs" (§5.3)~~ **(RESOLVED — CR-3)** | was: `def run_step` blocked on `subprocess.run()` until completion | `Orchestrator.start_step`/`finish_step` split the work; the API schedules `finish_step` as a `BackgroundTask` and exposes `GET /assessments/{id}/runs/{run_id}`; the UI polls it every 1.5s so "Approve & run" visibly goes proposed → running → done/failed. |
-| Confidence calibration / FP triage (§5.6 bonus row) | One heuristic (`single tool + info + low confidence`) | No calibration against outcome history, no cross-rule triage |
-| Finding-driven replanning breadth | Web + infra-CVE triggers | No DNS/SNMP/cloud-metadata triggers |
-| Remediation tracking | Findings have a static `solution` string | No lifecycle (open → remediating → verified-fixed → retested) |
+| ~~Confidence calibration / FP triage (§5.6 bonus row)~~ **(RESOLVED — FS-6)** | was: one heuristic (`single tool + info + low confidence`), no calibration against outcome history | `vapt_agent/calibration.py`, wired through `orchestrator.analyse(history=...)` |
+| ~~Finding-driven replanning breadth~~ **(RESOLVED — FS-7)** | was: web + infra-CVE triggers only, no DNS/SNMP/cloud-metadata triggers | `nmap` `dns_safe`/`snmp_safe` presets + a cloud-metadata-SSRF finding-driven trigger in `planner.py` |
+| ~~Remediation tracking~~ **(RESOLVED — HP-7, see §3 A7)** | was: findings have a static `solution` string, no lifecycle | `Finding.remediation_status` (open → in_progress → fixed → retested), analyst-settable, shown in report §5 |
 | Live ZAP / Metasploit | Code-path verified against faithful local stubs | Real daemon/framework not installed in this environment (documented honestly in `INTEGRATIONS.md`, not a code gap) |
 
 ### 2.3 Missing entirely (verified absent, not assumed)
@@ -119,11 +119,11 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 | ~~**Upload size/type limits**~~ **(RESOLVED — CR-2)** | was: whole file buffered, no size check | 25MB cap enforced via chunked read (413 on overflow); a malformed import now 400s cleanly instead of a raw parse-exception 500 |
 | ~~**Async/background scan execution**~~ **(RESOLVED — CR-3)** | was: `def run_step` synchronous | `start_step`/`finish_step` + `BackgroundTask` + poll endpoint (see 2.2). Cancel is still not implemented (A2, unchanged). |
 | ~~**Any FastAPI-level test (`TestClient`)**~~ **(RESOLVED — CR-1/CR-5)** | was: zero hits for `TestClient` | `tests/test_api_auth.py` now has 40 HTTP-level tests covering auth, roles, CSRF, the full create→import→analyse→approve→execute→report flow, upload caps, and parse errors |
-| **Persistence beyond the process lifetime** | `ASSESSMENTS: dict[str, Assessment] = {}` at module scope in `api.py` | Restarting the server during a live demo loses all state. (Raw tool outputs + audit log *do* survive on disk; the in-memory Assessment index does not.) |
-| **Export formats besides PDF** | Only `report.generate()` → PDF | No JSON/CSV export for a SIEM/ticketing handoff |
-| **Retest / change comparison between two assessments** | No diff logic anywhere | Can't show "this was fixed since last scan" |
-| **Pagination/filtering on `GET /assessments`** | Returns the full in-memory list, unbounded | Fine at hackathon scale; a real multi-team deployment would need it |
-| **CSP / security headers on the FastAPI responses** | No `SecurityHeadersMiddleware` or manual header-setting found | Defense-in-depth the XSS fix doesn't need to work, but judges doing a security-minded review will look for it given the product's own subject matter |
+| ~~**Persistence beyond the process lifetime**~~ **(RESOLVED — FS-1)** | was: `ASSESSMENTS: dict[str, Assessment] = {}` at module scope, in-memory only | `vapt_agent/store.py`'s `AssessmentStore` (SQLite, write-through, reloaded on startup) |
+| ~~**Export formats besides PDF**~~ **(RESOLVED — FS-3)** | was: only `report.generate()` → PDF | `GET /assessments/{id}/export.json` / `.../export.csv` |
+| ~~**Retest / change comparison between two assessments**~~ **(RESOLVED — HP-6, see below)** | was: no diff logic anywhere | `vapt_agent/diff.compare()`, `GET /assessments/{after}/diff/{before}` |
+| **Pagination/filtering on `GET /assessments`** | Returns the full in-memory list, unbounded | Fine at hackathon scale (A3, unchanged); a real multi-team deployment would need it |
+| ~~**CSP / security headers on the FastAPI responses**~~ **(RESOLVED — see §4)** | was: no `SecurityHeadersMiddleware` or manual header-setting found | `_add_security_headers` middleware in `api.py`, applied to every response |
 | ~~**A tracked sample PDF report in the repo**~~ **(RESOLVED — CR-4)** | was: `data/` gitignored, `demo.py` only wrote there | Committed at `docs/sample_report.pdf` |
 
 ---
@@ -135,12 +135,12 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [ ] A2. "Cancel a running scan" action (kill the subprocess, mark `ToolRun.status="cancelled"`)
 - [ ] A3. `GET /assessments` pagination (`limit`/`offset`) and basic filtering (`state=`)
 - [ ] A4. Re-run `demo.py`/`live_demo.py` against the organizer's actual lab target once issued (PS §9.1)
-- [ ] A5. JSON/CSV export of findings alongside the PDF (ticketing/SIEM handoff)
+- [x] A5. JSON/CSV export of findings alongside the PDF *(done — FS-3: `GET /assessments/{id}/export.json` / `.../export.csv`)*
 - [x] A6. Retest workflow *(done — HP-6: `vapt_agent/diff.py`, `GET /assessments/{after}/diff/{before}`, UI compare card)*
 - [x] A7. Remediation status lifecycle on `Finding` *(done — HP-7)*
-- [ ] A8. Multi-target batch assessments (today one `ScopeModel.targets` list works, but there's no "assessment group" concept for comparing N hosts)
+- [x] A8. Multi-target batch assessments *(done — FS-4: `Batch` model, `orchestrator.create_batch()`, `POST /batches`, `GET /batches/{id}` aggregated summary)*
 - [ ] A9. Explicit "mark finding as false positive" analyst action (today it's inferred, not analyst-confirmable)
-- [ ] A10. Persist `Assessment` objects to disk (even flat JSON per-id) so a server restart during a demo doesn't lose state
+- [x] A10. Persist `Assessment` objects to disk so a server restart during a demo doesn't lose state *(done — FS-1: `vapt_agent/store.py`'s `AssessmentStore`, SQLite)*
 
 ### B. Security and Privacy
 - [x] B1. **Minimal actor authentication** *(done — CR-1)* — at minimum, a shared bearer token / API key required on all mutating endpoints, with the authenticated identity (not a client-supplied string) written to `by`/`decided_by`
@@ -176,8 +176,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [x] E2. Structured application logging (Python `logging`, not bare prints) *(done — PL-7; no per-request IDs added, see §2.3-equivalent note: not needed at this scale)*
 - [ ] E3. `FastAPI` dependency-injected config object instead of module-level globals (`DATA_DIR`, `audit`, `orch`) — easier to test in isolation
 - [ ] E4. Add `TestClient`-based API tests (see Testing section) — this is both an architecture and QA item
-- [ ] E5. Document a real deployment story (systemd unit / Docker) even if not executed for the hackathon — strengthens "production-oriented" framing
-- [ ] E6. Basic backup story for `data/audit.log` (it's the one thing that can't be regenerated)
+- [x] E5. Document a real deployment story (systemd unit / Docker) *(done — FS-5: `Dockerfile`, `docker-compose.yml`, `deploy/vapt-agent.service`, `docs/DEPLOYMENT.md`)*
+- [x] E6. Basic backup story for `data/audit.log` *(done — FS-5: `deploy/backup_data.sh` + the no-logrotate warning in `docs/DEPLOYMENT.md`)*
 
 ### F. Testing and Reliability
 - [x] F1. FastAPI `TestClient` coverage of create → import → analyse → approve → execute → report through real HTTP *(done — CR-5, landed in `tests/test_api_auth.py` rather than a separate `test_api.py`)*
@@ -303,17 +303,27 @@ doesn't silently regress on the next UI edit.
 | ✅ **DONE** — PL-7 | Structured `logging` instead of bare prints | Bootstrap-admin banner and the two silent LLM-call fallbacks (`llm.summarize_assessment`, `reasoning.arbitrate`) now log through `logging` instead of `print()`/swallowing the exception outright |
 | ✅ **DONE** — PL-8 | Committed, automated regression test for the XSS-escaping fix | Already delivered as part of CR-1 -- see `tests/frontend/ui.test.js` lines covering "rendering safety (regression coverage for the stored-XSS fix)" |
 
-### Tier 5 — Future Scope (explicitly not for this hackathon submission)
+### Tier 5 — Future Scope
 
-| ID | Task |
-|---|---|
-| FS-1 | Persistent storage (SQLite/Postgres) for `Assessment` objects across restarts |
-| FS-2 | Multi-user RBAC (analyst / lead / viewer roles) beyond simple shared-token auth |
-| FS-3 | JSON/CSV export alongside PDF |
-| FS-4 | Multi-target batch assessment grouping |
-| FS-5 | Deployment story (Docker/systemd) with a backup plan for `audit.log` |
-| FS-6 | Confidence calibration against historical validation outcomes |
-| FS-7 | DNS/SNMP/cloud-metadata finding-driven planning triggers |
+Originally scoped as explicitly out of bounds for the hackathon submission; subsequently
+implemented in full. Kept as its own section (rather than folded into Tier 4) so the roadmap's
+history stays legible -- these were genuinely deferred, then genuinely built, not quietly
+promoted without a record of the decision.
+
+| ID | Task | Delivery note |
+|---|---|---|
+| ✅ **DONE** — FS-1 | Persistent storage for `Assessment` objects across restarts | `vapt_agent/store.py`'s `AssessmentStore`: one SQLite file (`data/assessments.db`), write-through on every mutating route, reloaded into `api.ASSESSMENTS` in the FastAPI `lifespan` on startup. `tests/test_store.py` + an API-level simulated-restart test in `test_api_auth.py` |
+| ✅ **DONE** — FS-2 | Multi-user RBAC (analyst / lead / viewer roles) beyond simple shared-token auth | Already shipped as part of CR-1's real-accounts rework (`vapt_agent/accounts.py`): ordered roles viewer < analyst < lead < admin, SQLite-backed, scrypt-hashed, server-side sessions. Recorded here because it exactly answers what FS-2 asked for, even though it landed under a different roadmap item |
+| ✅ **DONE** — FS-3 | JSON/CSV export alongside PDF | `GET /assessments/{id}/export.json` and `.../export.csv` (one row per correlated finding); read-only, viewer role, audited |
+| ✅ **DONE** — FS-4 | Multi-target batch assessment grouping | `Batch` model + `BatchStore`; `orchestrator.create_batch()` makes one independent Assessment per target from a shared scope template (a per-target scope rejection doesn't fail the whole batch); `POST /batches`, `GET /batches`, `GET /batches/{id}` (aggregated severity summary), `GET /batches/{id}/export.csv` |
+| ✅ **DONE** — FS-5 | Deployment story (Docker/systemd) with a backup plan for `audit.log` | `Dockerfile` + `docker-compose.yml`, `deploy/vapt-agent.service` (systemd, unprivileged account, `ProtectSystem=strict`), `deploy/backup_data.sh`, and `docs/DEPLOYMENT.md` -- including the one genuinely load-bearing warning: never hand `audit.log` to a generic logrotate rule, since its hash chain covers the whole file from the first entry |
+| ✅ **DONE** — FS-6 | Confidence calibration against historical validation outcomes | `vapt_agent/calibration.py`: groups other assessments' already-validated findings by signature (CVE, or title when there's none) and nudges a new finding's confidence toward the historical validated-rate, capped per pass, only with >= `MIN_SAMPLE` matching outcomes, always recorded as a labelled `[inference]` entry. Wired through `orchestrator.analyse(history=...)`, an optional parameter every pre-existing caller simply omits |
+| ✅ **DONE** — FS-7 | DNS/SNMP/cloud-metadata finding-driven planning triggers | Two new safe, read-only nmap NSE-script presets (`dns_safe`, `snmp_safe`) proposed when those ports are discovered; a finding-driven trigger that detects SSRF-to-cloud-metadata markers in a finding's own text (169.254.169.254 / `metadata.google.internal` / Alibaba's 100.100.100.200) and prioritizes it above its reported severity, since a raw SSRF detection is usually under-rated by the scanner that found it |
+
+**What this means for SECURITY.md**: its "what this project is explicitly NOT claiming" section
+originally listed no-persistent-storage-across-restarts as a deliberate limitation (true at the
+time it was written, before FS-1). That line has been updated to reflect FS-1 shipping; see
+SECURITY.md directly rather than trusting this summary of it.
 
 ---
 
@@ -367,8 +377,10 @@ The solution is ready when, without any script or hidden setup:
    actual HTTP-level API tests (CR-5), and this roadmap documenting what's shipped vs. what's
    deliberately deferred — because honestly scoping the submission is itself a PS-rewarded trait.
 
-Everything in Tier 5 (Future Scope) is explicitly *not* part of this definition — claiming it would
-be the overclaiming the PS and the hackathon rules both explicitly warn against.
+Tier 5 was originally scoped as explicitly *not* part of this definition — claiming it without
+having built it would be the overclaiming the PS and the hackathon rules both explicitly warn
+against. It has since been built in full (see the Tier 5 table above); this definition itself
+was never widened to depend on it, since none of points 1-7 needed it to begin with.
 
 ---
 
