@@ -15,7 +15,8 @@
           --crit:#f87171; --high:#fb923c; --med:#facc15; --low:#4ade80; --info:#94a3b8; }
   * { box-sizing: border-box; }
   html { scroll-behavior:smooth; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+         overflow-x:hidden; }
   header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px;
             background:linear-gradient(180deg, rgba(249,115,22,.06), transparent); position:relative; }
   header::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
@@ -25,6 +26,12 @@
   main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 53px); }
   .col { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
   .col:last-child { border-right:none; }
+  @media (max-width: 900px) {
+    /* Below ~900px the fixed 420px left column no longer leaves the right column usable width --
+       stack them instead, each scrolling its own content rather than the whole viewport. */
+    main { grid-template-columns: 1fr; height: auto; }
+    .col { border-right: none; border-bottom: 1px solid var(--line); overflow-y: visible; max-height: none; }
+  }
   textarea, input { width:100%; background:#0d0906; color:var(--text); border:1px solid var(--line);
                      border-radius:6px; padding:8px; font-family:inherit; font-size:13px; }
   textarea { min-height: 70px; resize:vertical; }
@@ -88,7 +95,7 @@
   /* ---- Error toasts: non-blocking, stack in the corner, auto-dismiss -- replaces alert(), which
      blocks the JS thread and is a poor screen-reader experience. ---- */
   .toast-stack { position:fixed; top:16px; right:16px; z-index:10000; display:flex;
-                 flex-direction:column; gap:8px; max-width:360px; }
+                 flex-direction:column; gap:8px; max-width:min(360px, calc(100vw - 32px)); }
   .toast { background:var(--panel); border:1px solid var(--crit); color:var(--text); border-radius:8px;
            padding:10px 32px 10px 12px; font-size:12.5px; position:relative;
            box-shadow:0 10px 24px -10px rgba(0,0,0,.5); animation:app-fade-in .25s cubic-bezier(.16,1,.3,1) both; }
