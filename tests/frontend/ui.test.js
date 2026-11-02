@@ -36,7 +36,7 @@ function assessment(overrides = {}) {
 /** Boot the real page. `respond(url, opts)` returns {status, body} for each fetch; every call is
  *  recorded in `calls`. By default GET /whoami -> 401 (signed out), matching a fresh page load. */
 function boot({ respond, signedInAs = null } = {}) {
-  const calls = [], alerts = [], downloads = [], eventSources = [];
+  const calls = [], alerts = [], downloads = [], eventSources = [], clipboard = [];
   const defaultRespond = (url, opts) => {
     if (url === '/whoami') {
       return signedInAs ? { body: whoami(signedInAs.username, signedInAs.role, signedInAs.must_change_password) }
@@ -53,6 +53,9 @@ function boot({ respond, signedInAs = null } = {}) {
       w.URL.createObjectURL = () => 'blob:test';
       w.URL.revokeObjectURL = () => {};
       w.HTMLAnchorElement.prototype.click = function () { downloads.push({ download: this.download }); };
+      // jsdom has no Clipboard API -- a minimal stand-in so copyAssessmentId() (PL-4) exercises its
+      // real logic; tests inspect the `clipboard` array for what was written.
+      w.navigator.clipboard = { writeText: async (text) => { clipboard.push(text); } };
       // jsdom has no real EventSource -- a minimal stand-in so openEventStream()/closeEventStream()
       // (CA-1) exercise their real logic; tests drive it by calling .onmessage(...) themselves.
       w.EventSource = class {
@@ -71,7 +74,8 @@ function boot({ respond, signedInAs = null } = {}) {
   });
   const w = dom.window;
   const $ = (s) => w.document.querySelector(s);
-  return { w, $, calls, alerts, downloads, eventSources, csrfOf: (c) => (c.opts.headers || {})['X-CSRF-Token'] };
+  return { w, $, calls, alerts, downloads, eventSources, clipboard,
+           csrfOf: (c) => (c.opts.headers || {})['X-CSRF-Token'] };
 }
 
 async function signIn(ui, username = 'alice', password = 'correct-horse-1') {
@@ -239,6 +243,22 @@ test('scope inputs are saved to localStorage on submit and restored on the next 
   assert.equal(ui2.$('#targets').value, '10.10.10.9, app2.lab.local');
   assert.equal(ui2.$('#exclusions').value, '10.10.10.9:3389');
   assert.equal(ui2.$('#allowActive').checked, true);
+});
+
+test('"Copy ID" writes the assessment id to the clipboard and shows brief confirmation (PL-4)', async () => {
+  const ui = boot({
+    respond: (url) => (url === '/login') ? { body: whoami('alice', 'analyst') } : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  const copyBtn = [...ui.$('#assessmentMeta').querySelectorAll('button')].find((b) => b.textContent === 'Copy ID');
+  assert.ok(copyBtn, 'a Copy ID button is rendered once an assessment exists');
+  copyBtn.click();
+  await settle();
+  assert.deepEqual(ui.clipboard, ['asm-1']);
+  assert.equal(copyBtn.textContent, 'Copied!');
 });
 
 test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials are same-origin', async () => {

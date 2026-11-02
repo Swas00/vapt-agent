@@ -983,9 +983,22 @@ $('#auditBtn').onclick = busyEntry($('#auditBtn'), async () => {
   renderAudit(data);
 });
 
+// PL-4: a one-click way to grab the assessment id for a bug report, a ticket, or pasting into a
+// second browser tab -- without it, an analyst has to select the id text by hand.
+async function copyAssessmentId(btn) {
+  try {
+    await navigator.clipboard.writeText(currentId || '');
+  } catch {
+    return;
+  }
+  const original = btn.textContent;
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = original; }, 1500);
+}
+
 function render(){
   if(!current) return;
-  $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b><br><span class="mono">state: ${esc(current.state)}${current.created_by ? ' · opened by ' + esc(current.created_by) : ''}</span></div>`;
+  $('#assessmentMeta').innerHTML = `<div class="card"><b>${esc(current.id)}</b> <button class="ghost" type="button" style="padding:3px 10px;font-size:11px" onclick="copyAssessmentId(this)">Copy ID</button><br><span class="mono">state: ${esc(current.state)}${current.created_by ? ' · opened by ' + esc(current.created_by) : ''}</span></div>`;
 
   function statusClass(s){
     if (s==='skipped') return 'sev-medium';
