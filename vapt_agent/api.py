@@ -18,8 +18,8 @@ import asyncio
 import hmac as _hmac
 import io as _io
 import json as _json
+import logging
 import re
-import sys
 import threading
 import time
 import xml.etree.ElementTree as _ET
@@ -41,6 +41,9 @@ from .models import Assessment, ScopeModel
 from .orchestrator import Orchestrator, ScopeError
 from .report import generate as generate_report
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 BOOTSTRAP_MARKER = DATA_DIR / "bootstrap_admin"
@@ -61,7 +64,7 @@ def get_store() -> accounts.AccountStore:
         account_store = accounts.AccountStore(DATA_DIR / "auth.db")
         banner = accounts.ensure_bootstrap_admin(account_store, BOOTSTRAP_MARKER)
         if banner:
-            print(banner, file=sys.stderr)
+            logger.warning(banner)
     return account_store
 
 

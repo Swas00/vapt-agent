@@ -97,3 +97,19 @@ def test_llm_path_falls_back_to_template_on_api_error(monkeypatch):
     findings = [_f("confirmed")]
     text = llm.summarize_assessment(a, findings)
     assert "1 authorized target" in text
+
+
+def test_llm_path_failure_is_logged_not_silently_swallowed(monkeypatch, caplog):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            raise RuntimeError("network down")
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    monkeypatch.setattr(llm, "_client", lambda: FakeClient())
+    with caplog.at_level("WARNING", logger="vapt_agent.llm"):
+        llm.summarize_assessment(_assessment(), [_f("confirmed")])
+    assert "falling back" in caplog.text.lower()

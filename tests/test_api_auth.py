@@ -664,14 +664,16 @@ def test_healthz_is_public_and_requires_no_session(env):
 
 # ---- startup behaviour ------------------------------------------------------------------------------
 
-def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, monkeypatch, capsys):
+def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(api, "DATA_DIR", tmp_path)
     monkeypatch.setattr(api, "BOOTSTRAP_MARKER", tmp_path / "bootstrap_admin")
     monkeypatch.setattr(api, "account_store", None)
-    store = api.get_store()
-    assert store.get_user("admin").must_change_password is True
-    assert "admin" in capsys.readouterr().err
+    with caplog.at_level("WARNING", logger="vapt_agent.api"):
+        store = api.get_store()
+        assert store.get_user("admin").must_change_password is True
+        assert "admin" in caplog.text
 
-    monkeypatch.setattr(api, "account_store", None)      # simulate a second process starting up
-    api.get_store()
-    assert "admin" not in capsys.readouterr().err         # no password reprinted
+        caplog.clear()
+        monkeypatch.setattr(api, "account_store", None)  # simulate a second process starting up
+        api.get_store()
+        assert "admin" not in caplog.text                # no password reprinted

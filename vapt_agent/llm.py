@@ -11,9 +11,12 @@ the report's executive summary.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from .models import Assessment, Finding
+
+logger = logging.getLogger(__name__)
 
 _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
@@ -71,6 +74,8 @@ def summarize_assessment(a: Assessment, findings: list[Finding]) -> str:
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
         return (text + hedge) if text else template
     except Exception:  # noqa: BLE001
+        logger.warning("LLM executive-summary call failed; falling back to the deterministic template",
+                       exc_info=True)
         return template
 
 

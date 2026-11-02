@@ -100,6 +100,14 @@ def test_sdk_exception_falls_back_to_none(monkeypatch):
     assert reasoning.arbitrate("ctx", CANDIDATES) is None
 
 
+def test_sdk_exception_is_logged_not_silently_swallowed(monkeypatch, caplog):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setattr(reasoning, "_client", lambda: FakeClient(raise_exc=RuntimeError("network down")))
+    with caplog.at_level("WARNING", logger="vapt_agent.reasoning"):
+        reasoning.arbitrate("ctx", CANDIDATES)
+    assert "falling back" in caplog.text.lower()
+
+
 def test_unknown_id_is_filtered_out(monkeypatch):
     """The model invents an id that was never in the candidate list -- it must be dropped, not
     passed through."""

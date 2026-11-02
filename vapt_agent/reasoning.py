@@ -22,10 +22,13 @@ reproducible rule-based ranking. Nothing in the planning pipeline hard-depends o
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Optional
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
@@ -86,6 +89,8 @@ def arbitrate(context: str, candidates: list[dict]) -> Optional[list[Verdict]]:
         data = json.loads(_strip_code_fence(text))
         batch = VerdictBatch.model_validate(data)
     except Exception:  # noqa: BLE001 - any failure here must fall back, never raise into the pipeline
+        logger.warning("LLM plan-step arbitration call failed; falling back to the rule-based ranking",
+                       exc_info=True)
         return None
     clean = [v for v in batch.verdicts if v.id in allowed_ids]
     if not clean:
