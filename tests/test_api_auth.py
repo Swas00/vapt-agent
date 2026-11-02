@@ -387,6 +387,34 @@ def test_malformed_import_body_is_a_clean_400_not_a_500(env):
     assert "could not parse" in r.text
 
 
+def test_run_step_returns_running_immediately_and_is_pollable_to_completion(env, monkeypatch):
+    def fake_run(target, preset, workdir, timeout=900):
+        return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="ok")
+    monkeypatch.setattr(api.orch.adapters["nmap"], "run", fake_run)
+
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    step = a["plan"][0]["id"]
+    env.client.post(f"/assessments/{a['id']}/plan/{step}/decision?approved=true", headers=hdr)
+    r = env.client.post(f"/assessments/{a['id']}/plan/{step}/run", headers=hdr)
+    assert r.status_code == 200
+    run = r.json()
+    assert run["status"] == "running"                    # returned before the scan actually ran
+
+    # TestClient drains background tasks before the call above returns, so by now it's finished;
+    # polling the run endpoint is how a real client would observe the same transition.
+    polled = env.client.get(f"/assessments/{a['id']}/runs/{run['id']}", headers=hdr).json()
+    assert polled["status"] == "ok"
+    assert polled["id"] == run["id"]
+
+
+def test_poll_unknown_run_id_404s(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.get(f"/assessments/{a['id']}/runs/no-such-run", headers=hdr)
+    assert r.status_code == 404
+
+
 def test_tool_runs_record_who_triggered_them(env, monkeypatch):
     def fake_run(target, preset, workdir, timeout=900):
         return ToolRun(tool="nmap", mode="live", target=target, preset=preset, status="failed",

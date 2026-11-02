@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -438,12 +438,26 @@ def decide_step(assessment_id: str, step_id: str, approved: bool,
 
 
 @app.post("/assessments/{assessment_id}/plan/{step_id}/run")
-def run_step(assessment_id: str, step_id: str, principal: Principal = Depends(require_role("analyst"))):
+def run_step(assessment_id: str, step_id: str, background_tasks: BackgroundTasks,
+            principal: Principal = Depends(require_role("analyst"))):
+    """Marks the step running and returns immediately; the scan itself runs in the background
+    so the request doesn't block on the subprocess. Poll GET .../runs/{run_id} for completion."""
     a = _get(assessment_id)
     try:
-        return orch.run_step(a, step_id, actor=principal.username)
+        run = orch.start_step(a, step_id, actor=principal.username)
     except ScopeError as e:
         raise HTTPException(400, str(e))
+    background_tasks.add_task(orch.finish_step, a, step_id, run.id, principal.username)
+    return run
+
+
+@app.get("/assessments/{assessment_id}/runs/{run_id}")
+def get_run(assessment_id: str, run_id: str, principal: Principal = Depends(require_role("viewer"))):
+    a = _get(assessment_id)
+    run = next((r for r in a.runs if r.id == run_id), None)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    return run
 
 
 @app.post("/assessments/{assessment_id}/import/{tool}")

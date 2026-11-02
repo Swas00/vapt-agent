@@ -3,6 +3,7 @@ enforcement, the correlator, and the risk engine. Every state transition is writ
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from . import correlate, frameworks, planner, risk
@@ -23,6 +24,12 @@ class Orchestrator:
         self.data_dir = Path(data_dir)
         self.audit = audit
         self.adapters = registry()
+        self._locks: dict[str, threading.Lock] = {}
+
+    def _lock(self, a: Assessment) -> threading.Lock:
+        """One lock per assessment, guarding mutation of its runs/plan/findings against a
+        background scan finishing while a request for the same assessment is in flight."""
+        return self._locks.setdefault(a.id, threading.Lock())
 
     # ---- lifecycle -----------------------------------------------------
     def create(self, request: str, scope: ScopeModel, actor: str = "analyst") -> Assessment:
@@ -59,17 +66,38 @@ class Orchestrator:
         self.audit.append(by, f"plan.step_{step.status}", assessment=a.id, step=step.id)
         return step
 
-    def run_step(self, a: Assessment, step_id: str, actor: str = "analyst") -> ToolRun:
+    def start_step(self, a: Assessment, step_id: str, actor: str = "analyst") -> ToolRun:
+        """Validate and mark a step 'running', returning a placeholder ToolRun immediately.
+        The actual (blocking) scan is performed by finish_step -- callers that want the
+        request to return right away schedule that as a background task; run_step below
+        calls both back-to-back for callers that want the old synchronous behaviour."""
         step = next(s for s in a.plan if s.id == step_id)
         if step.status not in ("approved",):
             raise ScopeError(f"step {step_id} is '{step.status}', not approved")
-        adapter = self.adapters.get(step.tool)
-        if adapter is None:
+        if self.adapters.get(step.tool) is None:
             raise ScopeError(f"no adapter registered for tool '{step.tool}'")
-        step.status = "running"
-        run = adapter.run(step.target, step.preset, self._workdir(a))
-        a.runs.append(run)
-        step.run_id, step.status = run.id, ("done" if run.status == "ok" else "failed")
+        run = ToolRun(tool=step.tool, mode=step.mode, target=step.target, preset=step.preset,
+                      status="running")
+        with self._lock(a):
+            a.runs.append(run)
+            step.run_id, step.status = run.id, "running"
+        self.audit.append("agent", "tool.start", assessment=a.id, run=run.id, tool=run.tool,
+                          target=run.target, triggered_by=actor)
+        return run
+
+    def finish_step(self, a: Assessment, step_id: str, run_id: str, actor: str = "analyst") -> None:
+        """Runs the actual scan and folds the result back into the placeholder ToolRun created
+        by start_step, in place, so a client polling by run_id sees one record transition
+        running -> done/failed rather than two unrelated run ids."""
+        step = next(s for s in a.plan if s.id == step_id)
+        adapter = self.adapters[step.tool]
+        result = adapter.run(step.target, step.preset, self._workdir(a))
+        with self._lock(a):
+            run = next(r for r in a.runs if r.id == run_id)
+            for field in type(result).model_fields:
+                if field != "id":
+                    setattr(run, field, getattr(result, field))
+            step.status = "done" if run.status == "ok" else "failed"
         # The *execution* is the agent's act, but a human triggered it -- keep both on the record.
         self.audit.append("agent", "tool.run", assessment=a.id, run=run.id, tool=run.tool,
                           target=run.target, status=run.status, raw_sha256=run.raw_sha256, error=run.error,
@@ -79,6 +107,12 @@ class Orchestrator:
         elif run.status != "ok":
             a.limitations.append(f"{run.tool} against {run.target} ({run.preset}): {run.status} -- {run.error}")
             a.events.append(Event(level="error", message=f"{run.tool} failed on {run.target}: {run.error}"))
+
+    def run_step(self, a: Assessment, step_id: str, actor: str = "analyst") -> ToolRun:
+        """Synchronous convenience wrapper (demo scripts, direct orchestrator use) over the same
+        two phases the API schedules separately via BackgroundTasks."""
+        run = self.start_step(a, step_id, actor)
+        self.finish_step(a, step_id, run.id, actor)
         return run
 
     def import_result(self, a: Assessment, tool: str, raw_path: Path, target: str = "",
