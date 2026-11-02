@@ -166,10 +166,10 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 - [ ] C9. Persist the analyst's last-used scope inputs (targets/exclusions) in `localStorage` for convenience across sessions (pure client-side nicety, no backend change)
 
 ### D. Advanced Features and Innovation
-- [ ] D1. Live progress streaming (SSE or WebSocket) once A1 lands, so the activity log updates in real time during a running scan — this is the natural companion to the async-execution fix and a strong demo moment
-- [ ] D2. A "replay" view: given the audit log, reconstruct and visually step through exactly what the agent decided and why, for judges to inspect post-hoc
-- [ ] D3. Confidence-weighted executive summary tone (already partially done via `llm.summarize_assessment`; extend to flag when the summary itself should hedge more given many `suspected`-only findings)
-- [ ] D4. Export the integration matrix + audit log as a standalone "evidence pack" zip for judges to inspect offline
+- [x] D1. Live progress streaming *(done — CA-1, SSE not WebSocket)*
+- [x] D2. Audit-trail "replay" view *(done — CA-2)*
+- [x] D3. Confidence-weighted executive summary tone *(done — CA-4)*
+- [x] D4. Evidence-pack export *(done — CA-3; bundles the report/audit/raw outputs, not the integration matrix specifically -- that's still only surfaced live via `/integration-matrix` and the UI, not packaged into the zip)*
 
 ### E. Technical Architecture and Scalability
 - [ ] E1. Convert `run_step`/`execute_approval` to `BackgroundTasks` (or a small task queue) + a `GET /assessments/{id}/runs/{run_id}` status-poll endpoint
@@ -285,10 +285,10 @@ doesn't silently regress on the next UI edit.
 
 | ID | Task | Why it differentiates |
 |---|---|---|
-| CA-1 | Live SSE/WebSocket activity-log streaming (builds on CR-3) | Watching the agent reason in real time, not polling, is the single most demo-impressive moment available given what's already built |
-| CA-2 | Audit-trail replay view | Makes "attributable" a *feature*, not just a backend property — few competing teams will have an inspectable decision trace |
-| CA-3 | Evidence-pack export (zip of audit log + raw tool outputs + report) | Independently verifiable without re-running the demo; strong for a judge reviewing after the fact |
-| CA-4 | Confidence-aware executive summary hedging | Small, cheap, and directly shows "transparent uncertainty" (a named "near-perfect solution" characteristic in the PS) in the one section non-technical judges actually read closely |
+| ✅ **DONE** — CA-1 | Live SSE activity-log streaming (builds on CR-3) | `GET /assessments/{id}/stream`: replays recorded events then pushes new ones live (indexed so a client skips its own already-known replay); UI opens it on assessment creation and live-appends to the log | Watching the agent reason in real time, not polling, is the single most demo-impressive moment available given what's already built |
+| ✅ **DONE** — CA-2 | Audit-trail replay view | `GET /audit?assessment_id=<id>` scopes the hash-chained log to one assessment; UI "Load audit trail" card shows the chain verdict + a chronological, oldest-first entry list | Makes "attributable" a *feature*, not just a backend property — few competing teams will have an inspectable decision trace |
+| ✅ **DONE** — CA-3 | Evidence-pack export (zip of audit log + raw tool outputs + report) | `POST /assessments/{id}/evidence-pack`; UI "Download evidence pack" button | Independently verifiable without re-running the demo; strong for a judge reviewing after the fact |
+| ✅ **DONE** — CA-4 | Confidence-aware executive summary hedging | `llm._uncertainty_note()`: when ≥60% of a summary's findings are still 'suspected', an explicit caveat is appended in both the template and LLM paths (guaranteed even if the LLM ignores the hedging instruction) | Small, cheap, and directly shows "transparent uncertainty" (a named "near-perfect solution" characteristic in the PS) in the one section non-technical judges actually read closely |
 
 ### Tier 4 — Polish
 
