@@ -17,20 +17,30 @@
   html { scroll-behavior:smooth; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
          overflow-x:hidden; }
-  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px;
-            background:linear-gradient(180deg, rgba(249,115,22,.06), transparent); position:relative; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px 10px;
+            flex-wrap:wrap; background:linear-gradient(180deg, rgba(249,115,22,.06), transparent); position:relative; }
   header::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
                   background:linear-gradient(90deg, var(--accent), var(--accent2), transparent 85%); }
   header h1 { font-size:16px; margin:0; font-weight:600; }
   header span { color: var(--muted); font-size:12px; }
-  main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 53px); }
-  .col { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
+  /* 1fr min-width:0 lets the right column's own content (mono text, long finding titles) wrap/scroll
+     instead of forcing the grid track wider than the viewport -- a fixed-px left column plus a bare
+     1fr track can otherwise overflow horizontally when a descendant refuses to shrink below its
+     content size (the classic flexbox/grid min-size-auto trap). */
+  main { display:grid; grid-template-columns: 420px minmax(0, 1fr); gap:0; height: calc(100vh - 53px);
+         max-width:1800px; margin:0 auto; }
+  .col { overflow-y:auto; padding:16px; border-right:1px solid var(--line); min-width:0; }
   .col:last-child { border-right:none; }
   @media (max-width: 900px) {
     /* Below ~900px the fixed 420px left column no longer leaves the right column usable width --
        stack them instead, each scrolling its own content rather than the whole viewport. */
     main { grid-template-columns: 1fr; height: auto; }
     .col { border-right: none; border-bottom: 1px solid var(--line); overflow-y: visible; max-height: none; }
+  }
+  @media (max-width: 480px) {
+    /* Small phones: trim chrome padding so more of the already-narrow width goes to content. */
+    header { padding:12px 14px; }
+    .col { padding:12px; }
   }
   textarea, input { width:100%; background:#0d0906; color:var(--text); border:1px solid var(--line);
                      border-radius:6px; padding:8px; font-family:inherit; font-size:13px; }
@@ -140,6 +150,13 @@
      Colors match the design prompt exactly: orange-300→yellow-400→amber-300 / yellow-300→
      orange-400→red-400 headline gradients, orange-500/10 badge, orange-500→yellow-500 primary CTA. */
   .hero { position:relative; width:100%; height:100vh; min-height:640px; overflow:hidden; background:#000; }
+  /* Mobile browser chrome (notably iOS Safari) resizes the address bar as the page scrolls, so a
+     plain 100vh hero jumps/clips as that happens. 100svh ("small viewport height", excludes the
+     retractable UI) fixes that; browsers that don't understand it ignore the line entirely and keep
+     the 100vh above, so this is a pure progressive enhancement with no fallback branch needed. */
+  @supports (height: 100svh) {
+    .hero { height:100svh; }
+  }
   .hero-canvas { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
   .hero-canvas.is-hidden { display:none; }
   .hero-fallback-bg {
@@ -427,7 +444,7 @@ void main(void){
   <h1>🛡️ VAPT Agent</h1>
   <span>Scope-bound, evidence-driven, human-in-the-loop assessment assistant — lab-only</span>
 </header>
-<section id="authSection" style="padding:16px;max-width:480px">
+<section id="authSection" style="padding:16px;max-width:480px;margin:0 auto">
   <div class="card" id="authCard">
     <label for="loginUsername">Username</label>
     <input id="loginUsername" type="text" autocomplete="username" />
@@ -498,7 +515,7 @@ void main(void){
     <h2>Import a tool result</h2>
     <div class="card">
       <label for="importTool">Tool</label>
-      <select id="importTool" style="width:100%;background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
+      <select id="importTool" style="width:100%;background:#0d0906;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px">
         <option value="nessus">Nessus (.nessus)</option>
         <option value="openvas">OpenVAS/Greenbone (XML)</option>
         <option value="nikto">Nikto (JSON)</option>
