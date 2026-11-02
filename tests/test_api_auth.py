@@ -481,6 +481,16 @@ def test_integration_matrix_and_static_ui_are_public(env):
     assert env.client.get("/ui/").status_code == 200
 
 
+def test_security_headers_present_on_every_response_success_or_error(env):
+    for r in (env.client.get("/integration-matrix"),               # 200
+             env.client.post("/login", json={"username": "alice", "password": "wrong"}),  # 401
+             env.client.get("/assessments/does-not-exist")):        # 401 (no session)
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.headers["x-frame-options"] == "DENY"
+        assert r.headers["referrer-policy"] == "no-referrer"
+        assert "default-src 'self'" in r.headers["content-security-policy"]
+
+
 # ---- startup behaviour ------------------------------------------------------------------------------
 
 def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, monkeypatch, capsys):

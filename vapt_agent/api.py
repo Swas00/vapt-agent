@@ -74,6 +74,32 @@ if static_dir.exists():
     app.mount("/ui", StaticFiles(directory=str(static_dir), html=True), name="ui")
 
 
+# Defense-in-depth headers, applied to every response. The CSP's 'unsafe-inline' for script/style
+# is a deliberate, documented tradeoff -- static/index.html uses inline <script>/<style> blocks and
+# onclick="..." attribute handlers (CSP nonces don't cover attribute handlers at all), so blocking
+# inline entirely would break the page. The actual XSS defense is that every dynamic value is run
+# through esc() before being placed in the DOM (see index.html, tested in tests/frontend/ui.test.js);
+# this header is a second layer on top of that, not a replacement for it.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'self'"
+    ),
+}
+
+
+@app.middleware("http")
+async def _add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting / noise control around authentication (transport-level concerns, not account
 # storage, so these live here rather than in accounts.py)
