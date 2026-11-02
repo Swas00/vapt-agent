@@ -35,6 +35,13 @@
   textarea, input { width:100%; background:#0d0906; color:var(--text); border:1px solid var(--line);
                      border-radius:6px; padding:8px; font-family:inherit; font-size:13px; }
   textarea { min-height: 70px; resize:vertical; }
+  /* WCAG AA contrast pass (PL-2): browsers default placeholder text to a translucent version of the
+     field's own color, which varies by engine and can drift below 4.5:1 depending on the exact
+     alpha used. Pin it explicitly to --muted at full opacity instead -- 8.32:1 against the field
+     background (#0d0906), verified with the standard relative-luminance formula (WCAG 2.1 §1.4.3).
+     See scripts/contrast_audit.py for every other text/background pair in this palette -- all
+     already clear 4.5:1 (AA, normal text) without any change. */
+  textarea::placeholder, input::placeholder { color: var(--muted); opacity: 1; }
   label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
   /* ---- Buttons: magnetic pull toward the cursor (--mx/--my, set by JS), a ripple-on-click
      (.btn-ripple, spawned by JS), and an expo-out easing curve instead of a generic "ease" --
