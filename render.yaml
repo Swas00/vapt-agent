@@ -11,6 +11,7 @@ services:
     name: vapt-agent
     runtime: docker
     plan: free
+    healthCheckPath: /healthz
     envVars:
       - key: VAPT_ANALYST_TOKENS
         sync: false
