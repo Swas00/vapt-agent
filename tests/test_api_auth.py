@@ -561,6 +561,36 @@ def test_traversing_upload_names_cannot_escape_the_assessment_directory(env, evi
 
 # ---- read-only routes stay reachable to anyone signed in -------------------------------------------
 
+def test_event_stream_replays_existing_events_then_stops(env):
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    r = env.client.get(f"/assessments/{a['id']}/stream?max_seconds=0", headers=hdr)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert "Assessment created by alice" in r.text
+    assert r.text.count("data: ") == len(a["events"])
+
+
+def test_event_stream_without_a_session_is_401(env):
+    assert env.client.get("/assessments/does-not-exist/stream?max_seconds=0").status_code == 401
+
+
+def test_event_stream_works_with_cookie_but_no_csrf_header(env):
+    # EventSource can't send custom headers, so the stream route must not require one -- unlike
+    # every mutating route, which does.
+    a = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    no_csrf = {k: v for k, v in hdr.items() if k.lower() != "x-csrf-token"}
+    r = env.client.get(f"/assessments/{a['id']}/stream?max_seconds=0", headers=no_csrf)
+    assert r.status_code == 200
+
+
+def test_event_stream_404s_on_unknown_assessment(env):
+    hdr = session(env, "alice")
+    r = env.client.get("/assessments/does-not-exist/stream?max_seconds=0", headers=hdr)
+    assert r.status_code == 404
+
+
 def test_integration_matrix_and_static_ui_are_public(env):
     assert env.client.get("/integration-matrix").status_code == 200
     assert env.client.get("/ui/").status_code == 200

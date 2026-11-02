@@ -14,6 +14,7 @@ separation of duties, not just "any logged-in person."
 """
 from __future__ import annotations
 
+import asyncio
 import hmac as _hmac
 import json as _json
 import re
@@ -27,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -470,6 +471,49 @@ def diff_assessments(after_id: str, before_id: str,
     one-shot scan. `after_id` should be the later assessment, `before_id` the earlier one."""
     after, before = _get(after_id), _get(before_id)
     return diffmod.compare(before, after)
+
+
+EVENT_STREAM_POLL_SECONDS = 1.0
+_DEFAULT_STREAM_SECONDS = 3600.0   # ~1h; EventSource reconnects on its own once a stream ends
+
+
+def _sse(event) -> str:
+    return f"data: {_json.dumps(event.model_dump())}\n\n"
+
+
+@app.get("/assessments/{assessment_id}/stream")
+async def stream_events(assessment_id: str, request: Request, max_seconds: float = _DEFAULT_STREAM_SECONDS,
+                        # EventSource cannot send custom headers, so a cookie session here can't
+                        # carry the usual CSRF header -- safe to skip for this route specifically:
+                        # it's read-only (no state change for CSRF to forge), and the session
+                        # cookie is SameSite=Strict, so a cross-site page's EventSource wouldn't
+                        # even have the cookie attached in the first place. Same exception as
+                        # /whoami, for the same underlying reason.
+                        principal: Principal = Depends(require_role("viewer", require_csrf=False))):
+    """Server-Sent Events for the activity/decision log: replays everything recorded so far, then
+    pushes new Events as the orchestrator appends them (notably while a background scan from
+    CR-3 is still running), so a judge watching the UI sees the agent's reasoning as it happens
+    instead of only after the next full refresh()."""
+    a = _get(assessment_id)
+
+    async def gen():
+        sent = 0
+        for e in a.events:
+            yield _sse(e)
+        sent = len(a.events)
+        elapsed = 0.0
+        while elapsed < max_seconds:
+            if await request.is_disconnected():
+                return
+            if len(a.events) > sent:
+                for e in a.events[sent:]:
+                    yield _sse(e)
+                sent = len(a.events)
+            await asyncio.sleep(EVENT_STREAM_POLL_SECONDS)
+            elapsed += EVENT_STREAM_POLL_SECONDS
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/assessments/{assessment_id}/plan/{step_id}/decision")
