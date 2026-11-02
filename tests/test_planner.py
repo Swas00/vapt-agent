@@ -38,6 +38,46 @@ def test_service_candidates_cover_web_smb_ftp_tls_db():
     assert all(s.kind == "service" for s in steps)
 
 
+def test_service_candidates_cover_dns_and_snmp():
+    """FS-7: DNS and SNMP services, which a port-count-driven plan would otherwise under-prioritize,
+    each trigger a dedicated, read-only NSE-script follow-up."""
+    a = make_assessment()
+    services = [
+        Service(host="10.10.10.5", port=53, name="domain", source_tool="nmap"),
+        Service(host="10.10.10.5", port=161, name="snmp", source_tool="nmap"),
+    ]
+    steps = planner.plan_from_services(a, services)
+    tools_targets = {(s.tool, s.preset) for s in steps}
+    assert ("nmap", "dns_safe") in tools_targets
+    assert ("nmap", "snmp_safe") in tools_targets
+    assert all(s.kind == "service" for s in steps)
+
+
+def test_cloud_metadata_marker_in_finding_triggers_corroboration_candidate():
+    """FS-7: a finding whose description suggests SSRF reaching a cloud metadata endpoint is
+    prioritized above a typical finding-driven candidate and queued for an nmap HTTP-vuln recheck."""
+    a = make_assessment()
+    f = Finding(title="SSRF in image-fetch endpoint", asset="10.10.10.5", port=8080,
+               severity="medium", confidence=0.5, source_tools=["zap"],
+               description="The 'url' parameter can be redirected to 169.254.169.254.")
+    a.findings = [f]
+    steps = planner.plan_from_findings(a)
+    metadata_steps = [s for s in steps if s.preset == "vuln_http" and s.tool == "nmap"]
+    assert len(metadata_steps) == 1
+    assert metadata_steps[0].trigger_finding_id == f.id
+    assert metadata_steps[0].priority_score == planner.SERVICE_TRIGGER_PRIORITY["cloud_metadata"]
+    assert metadata_steps[0].priority_score > 0.5   # outranks an ordinary medium-severity trigger
+
+
+def test_no_cloud_metadata_candidate_without_a_marker():
+    a = make_assessment()
+    f = Finding(title="Reflected XSS", asset="10.10.10.5", port=8080, severity="medium",
+               confidence=0.5, source_tools=["zap"], description="Unescaped input in a query param.")
+    a.findings = [f]
+    steps = planner.plan_from_findings(a)
+    assert not any(s.preset == "vuln_http" and s.tool == "nmap" for s in steps)
+
+
 def test_no_duplicate_candidates_across_calls():
     a = make_assessment()
     services = [Service(host="10.10.10.5", port=80, name="http", source_tool="nmap")]

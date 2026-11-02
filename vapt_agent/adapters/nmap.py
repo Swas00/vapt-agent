@@ -27,6 +27,12 @@ class Nmap(Adapter):
         "smb_safe": ["-Pn", "--script", "smb-protocols,smb2-security-mode,smb-vuln-ms17-010", "-p", "{ports}"],
         "ftp_safe": ["-Pn", "--script", "ftp-anon,ftp-syst", "-p", "{ports}"],
         "vulners": ["-sV", "-Pn", "--script", "vulners", "-p", "{ports}"],
+        # FS-7: safe, read-only NSE scripts for two services that are high-value for an attacker
+        # but easy to under-prioritize in a port-count-driven plan -- DNS recursion/zone-transfer
+        # misconfiguration and SNMP default/weak community strings. Neither script writes anything
+        # or attempts a default-credential login; both only ask the service to describe itself.
+        "dns_safe": ["-Pn", "-sU", "--script", "dns-nsid,dns-recursion", "-p", "53"],
+        "snmp_safe": ["-Pn", "-sU", "--script", "snmp-info,snmp-sysdescr", "-p", "161"],
     }
     ports_default = "21,22,23,25,80,110,139,443,445,3306,5432,8080,8443"
 

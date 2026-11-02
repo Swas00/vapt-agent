@@ -25,10 +25,17 @@ TOOL_FOR_WEB = ["nikto", "zap"]
 
 # base_priority: 0..1, higher = more urgent. Purely a deterministic fallback/seed score; an LLM
 # arbitration pass (when configured) can re-rank on top of this, never below the closed candidate set.
-SERVICE_TRIGGER_PRIORITY = {"web": 0.55, "smb": 0.70, "ftp": 0.50, "ssl": 0.35, "db": 0.60, "dns": 0.30}
+SERVICE_TRIGGER_PRIORITY = {"web": 0.55, "smb": 0.70, "ftp": 0.50, "ssl": 0.35, "db": 0.60, "dns": 0.30,
+                           "snmp": 0.45, "cloud_metadata": 0.85}
 
 DB_PORT_NAMES = {"mysql", "ms-sql-s", "postgresql", "oracle", "mongodb", "redis", "memcached"}
 DB_PORTS = {3306, 5432, 1433, 1521, 27017, 6379, 11211}
+
+# FS-7: keywords that indicate a finding describes (or an SSRF could reach) a cloud instance
+# metadata endpoint -- a disproportionately high-impact target, since a successful request there
+# commonly yields the instance's IAM credentials. Covers the three major providers' link-local
+# metadata addresses/hostnames.
+CLOUD_METADATA_MARKERS = ("169.254.169.254", "metadata.google.internal", "100.100.100.200", "ssrf")
 
 
 @dataclass
@@ -110,6 +117,20 @@ def _candidates_from_services(a: Assessment, services: list[Service]) -> list[Ca
                                  rationale=f"A database service ({svc.name or svc.port}) is exposed on "
                                            f"{svc.host}:{svc.port}; database ports carry high impact if "
                                            "misconfigured, so version/vuln fingerprinting is prioritized."))
+        if svc.port == 53 or svc.name in ("domain", "dns"):
+            out.append(Candidate(tool="nmap", target=svc.host, preset="dns_safe", kind="service",
+                                 depends_on_evidence=[ref], base_priority=SERVICE_TRIGGER_PRIORITY["dns"],
+                                 rationale=f"DNS exposed on {svc.host}:53; checking recursion and NSID "
+                                           "disclosure, both read-only, since a misconfigured recursive "
+                                           "resolver or a leaked internal server identifier can expose "
+                                           "internal network topology."))
+        if svc.port == 161 or svc.name == "snmp":
+            out.append(Candidate(tool="nmap", target=svc.host, preset="snmp_safe", kind="service",
+                                 depends_on_evidence=[ref], base_priority=SERVICE_TRIGGER_PRIORITY["snmp"],
+                                 rationale=f"SNMP exposed on {svc.host}:161; querying sysDescr with the "
+                                           "default read-only scripts to check whether the device answers "
+                                           "to a weak/default community string, a common source of full "
+                                           "device-configuration disclosure."))
     return out
 
 
@@ -129,7 +150,24 @@ def _candidates_from_findings(a: Assessment, findings: list[Finding]) -> list[Ca
     # nmap vulners check there would tell us nothing we don't already know.
     nmap_cve_ports = {(rf.asset, rf.port) for rf in a.raw_findings if "nmap" in rf.source_tools and rf.cve}
     for f in findings:
-        if f.status == "false_positive_candidate" or f.severity not in ("critical", "high"):
+        if f.status == "false_positive_candidate":
+            continue
+        # Cloud-metadata-SSRF is checked regardless of the finding's own reported severity: a web
+        # scanner commonly reports a raw SSRF as "medium" because it only sees the redirect, not
+        # what it reaches -- the actual impact (instance IAM credentials) is realized downstream.
+        haystack = f"{f.title} {f.description} {f.location}".lower()
+        if any(marker in haystack for marker in CLOUD_METADATA_MARKERS):
+            out.append(Candidate(
+                tool="nmap", target=f.asset, preset="vuln_http", kind="finding",
+                trigger_finding_id=f.id, base_priority=SERVICE_TRIGGER_PRIORITY["cloud_metadata"],
+                rationale=f"'{f.title}' on {f.asset} suggests the application may be able to reach a "
+                           "cloud instance metadata endpoint (SSRF to 169.254.169.254 or an equivalent "
+                           "provider address) -- a successful request there commonly yields the "
+                           "instance's IAM credentials, so this is prioritized above a typical web "
+                           "finding; re-running nmap's HTTP vuln-script battery against the host is "
+                           "queued as the independent corroboration step before any active validation "
+                           "of the SSRF path itself is requested from a lead."))
+        if f.severity not in ("critical", "high"):
             continue
         if len(f.source_tools) > 1:          # already corroborated by an independent tool
             continue
