@@ -292,16 +292,16 @@ doesn't silently regress on the next UI edit.
 
 ### Tier 4 — Polish
 
-| ID | Task |
-|---|---|
-| PL-1 | ARIA live region on activity log |
-| PL-2 | WCAG AA contrast pass on the orange/amber palette |
-| PL-3 | `localStorage` persistence of last-used scope inputs |
-| PL-4 | "Copy assessment ID" affordance |
-| PL-5 | Inline client-side form validation before submit |
-| PL-6 | `/healthz` endpoint |
-| PL-7 | Structured `logging` instead of bare prints |
-| PL-8 | Committed, automated regression test for the XSS-escaping fix (port the jsdom check into the test suite) |
+| ID | Task | Delivery note |
+|---|---|---|
+| ✅ **DONE** — PL-1 | ARIA live region on activity log | `#events` carries `aria-live="polite" role="log"`; screen readers announce new SSE-delivered events without the user having to tab into the log |
+| ✅ **DONE** — PL-2 | WCAG AA contrast pass on the orange/amber palette | `scripts/contrast_audit.py` computes contrast for all 19 text/background pairs actually rendered (body, links, event levels, button text at both gradient endpoints, severity pills, hero translucent fills) against the 4.5:1 AA threshold -- all already passed; the one non-deterministic case (browser-default placeholder opacity) is now pinned explicitly to `--muted`. Regression-tested in `tests/test_contrast_audit.py` |
+| ✅ **DONE** — PL-3 | `localStorage` persistence of last-used scope inputs | Request text/targets/exclusions/checkboxes saved on submit, restored on load, wrapped in try/catch for private-browsing/disabled-storage |
+| ✅ **DONE** — PL-4 | "Copy assessment ID" affordance | "Copy ID" button next to the assessment id writes it to the clipboard and shows a brief "Copied!" confirmation |
+| ✅ **DONE** — PL-5 | Inline client-side form validation before submit | Empty request / no targets / attestation unchecked are caught with an inline message next to the button before any round-trip; the server's own `scope.py` validation is unchanged and remains the actual authorization check |
+| ✅ **DONE** — PL-6 | `/healthz` endpoint | Unauthenticated, no rate limit, reveals nothing about assessments/accounts -- for a load balancer or uptime probe |
+| ✅ **DONE** — PL-7 | Structured `logging` instead of bare prints | Bootstrap-admin banner and the two silent LLM-call fallbacks (`llm.summarize_assessment`, `reasoning.arbitrate`) now log through `logging` instead of `print()`/swallowing the exception outright |
+| ✅ **DONE** — PL-8 | Committed, automated regression test for the XSS-escaping fix | Already delivered as part of CR-1 -- see `tests/frontend/ui.test.js` lines covering "rendering safety (regression coverage for the stored-XSS fix)" |
 
 ### Tier 5 — Future Scope (explicitly not for this hackathon submission)
 
