@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import accounts
+from . import diff as diffmod
 from .audit import AuditLog
 from .models import Assessment, ScopeModel
 from .orchestrator import Orchestrator, ScopeError
@@ -460,6 +461,15 @@ def list_assessments(principal: Principal = Depends(require_role("viewer"))):
 @app.get("/assessments/{assessment_id}")
 def get_assessment(assessment_id: str, principal: Principal = Depends(require_role("viewer"))):
     return _get(assessment_id)
+
+
+@app.get("/assessments/{after_id}/diff/{before_id}")
+def diff_assessments(after_id: str, before_id: str,
+                     principal: Principal = Depends(require_role("viewer"))):
+    """New/fixed/persisting findings between two assessments -- a retest workflow, not just a
+    one-shot scan. `after_id` should be the later assessment, `before_id` the earlier one."""
+    after, before = _get(after_id), _get(before_id)
+    return diffmod.compare(before, after)
 
 
 @app.post("/assessments/{assessment_id}/plan/{step_id}/decision")

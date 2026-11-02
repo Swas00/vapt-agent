@@ -319,6 +319,35 @@ def test_viewer_can_read_but_not_create(env):
     assert r.status_code == 403 and "analyst" in r.text
 
 
+def test_diff_endpoint_returns_new_fixed_persisting(env):
+    a1 = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a1["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a1['id']}/analyse", headers=hdr)
+
+    a2 = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert import_nessus(env, a2["id"], hdr).status_code == 200
+    env.client.post(f"/assessments/{a2['id']}/analyse", headers=hdr)
+
+    r = env.client.get(f"/assessments/{a2['id']}/diff/{a1['id']}", headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["before_id"] == a1["id"] and body["after_id"] == a2["id"]
+    assert body["new_count"] == 0 and body["fixed_count"] == 0   # identical imports -> nothing changed
+    assert body["persisting_count"] > 0
+
+    viewer_hdr = session(env, "victor")
+    assert env.client.get(f"/assessments/{a2['id']}/diff/{a1['id']}", headers=viewer_hdr).status_code == 200
+
+
+def test_diff_endpoint_404s_on_unknown_assessment(env):
+    a1 = create_assessment(env, "alice")
+    hdr = session(env, "alice")
+    assert env.client.get(f"/assessments/{a1['id']}/diff/does-not-exist", headers=hdr).status_code == 404
+    assert env.client.get(f"/assessments/does-not-exist/diff/{a1['id']}", headers=hdr).status_code == 404
+
+
 def test_admin_routes_require_admin_role(env):
     alice_hdr = session(env, "alice")
     r = env.client.post("/admin/users", json={"username": "x", "password": GOOD_PW, "role": "viewer"},
