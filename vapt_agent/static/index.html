@@ -714,10 +714,24 @@ $('#importBtn').onclick = entry(async () => {
   await refresh();
 });
 
+// Scans run as a background task server-side, so the 'run' call returns a 'running' ToolRun
+// right away; poll it until it leaves that state so the UI shows the transition live instead
+// of the request just hanging for the scan's full duration.
+async function pollRun(aid, runId) {
+  for (;;) {
+    const run = await api(`/assessments/${aid}/runs/${runId}`);
+    if (run.status !== 'running' || aid !== currentId) return run;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
 const runStep = entry(async (stepId) => {
-  await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=true`, {method:'POST'});
-  await api(`/assessments/${currentId}/plan/${stepId}/run`, {method:'POST'});
-  await refresh();
+  const aid = currentId;
+  await api(`/assessments/${aid}/plan/${stepId}/decision?approved=true`, {method:'POST'});
+  const run = await api(`/assessments/${aid}/plan/${stepId}/run`, {method:'POST'});
+  await refresh();                 // shows the step as 'running' immediately
+  await pollRun(aid, run.id);
+  if (aid === currentId) await refresh();   // shows the final done/failed state
 });
 const rejectStep = entry(async (stepId) => {
   await api(`/assessments/${currentId}/plan/${stepId}/decision?approved=false`, {method:'POST'});

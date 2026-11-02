@@ -211,6 +211,34 @@ test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials a
   assert.equal(ui.csrfOf(loginCall), undefined, 'no session exists yet when logging in');
 });
 
+test('"Approve & run" starts a background scan and polls it to completion', async () => {
+  let getCount = 0;
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (url === '/assessments' && opts.method === 'POST') return { body: assessment() };
+      if (url === '/assessments/asm-1/plan/step-1/decision') return { body: {} };
+      if (url === '/assessments/asm-1/plan/step-1/run') return { body: { id: 'run-1', status: 'running' } };
+      if (url === '/assessments/asm-1/runs/run-1') return { body: { id: 'run-1', status: 'ok' } };
+      if (url === '/assessments/asm-1') {
+        getCount++;                 // first refresh (right after 'run') shows 'running', then 'done'
+        return { body: assessment({ plan: [{ ...assessment().plan[0], status: getCount === 1 ? 'running' : 'done' }] }) };
+      }
+      return { body: {} };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#plan button').click();                 // "Approve & run"
+  await settle(80);
+
+  assert.ok(ui.calls.some((c) => c.url === '/assessments/asm-1/plan/step-1/run'));
+  assert.ok(ui.calls.some((c) => c.url === '/assessments/asm-1/runs/run-1'), 'polled the run status endpoint');
+  assert.ok(ui.$('#plan').innerHTML.includes('>done<'), 'final refresh shows the completed state');
+});
+
 test('a 401 mid-session returns to the sign-in form and clears the current assessment', async () => {
   let reject = false;
   const ui = boot({
