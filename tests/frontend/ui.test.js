@@ -225,6 +225,55 @@ test('mutating calls echo X-CSRF-Token from /whoami or /login, and credentials a
   assert.equal(ui.csrfOf(loginCall), undefined, 'no session exists yet when logging in');
 });
 
+test('"Compare" fetches the diff endpoint and renders new/fixed/persisting', async () => {
+  const ui = boot({
+    respond: (url, opts) => {
+      if (url === '/login') return { body: whoami('alice', 'analyst') };
+      if (url === '/assessments' && opts.method === 'POST') return { body: assessment() };
+      if (url === '/assessments/asm-1/diff/asm-0') {
+        return { body: {
+          before_id: 'asm-0', after_id: 'asm-1',
+          new: [{ title: 'New SQLi', asset: '10.10.10.5', port: 80, severity: 'high' }],
+          fixed: [{ title: 'Old XSS', asset: '10.10.10.5', port: 443, severity: 'medium' }],
+          persisting: [],
+        } };
+      }
+      return { body: assessment() };
+    },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#diffAgainst').value = 'asm-0';
+  ui.$('#diffBtn').click();
+  await settle();
+
+  assert.ok(ui.calls.some((c) => c.url === '/assessments/asm-1/diff/asm-0'));
+  const html = ui.$('#diffResult').innerHTML;
+  assert.match(html, /New SQLi/);
+  assert.match(html, /Old XSS/);
+  assert.match(html, /1 new/);
+  assert.match(html, /1 fixed/);
+});
+
+test('"Compare" without an earlier assessment ID shows a toast, not a server call', async () => {
+  const ui = boot({
+    respond: (url, opts) => (url === '/login') ? { body: whoami('alice', 'analyst') }
+                           : (url === '/assessments' && opts.method === 'POST') ? { body: assessment() }
+                           : { body: assessment() },
+  });
+  await settle();
+  await signIn(ui);
+  ui.$('#createBtn').click();
+  await settle();
+  ui.$('#diffBtn').click();
+  await settle();
+
+  assert.ok(!ui.calls.some((c) => c.url.includes('/diff/')));
+  assert.ok(ui.$('#toastStack .toast'), 'a toast asked for the earlier assessment ID');
+});
+
 test('"Approve & run" starts a background scan and polls it to completion', async () => {
   let getCount = 0;
   const ui = boot({

@@ -510,6 +510,14 @@ void main(void){
     <div id="findings"></div>
     <h2>Approvals (active validation)</h2>
     <div id="approvals"></div>
+
+    <h2>Compare to a previous assessment (retest)</h2>
+    <div class="card">
+      <label for="diffAgainst">Earlier assessment ID (same scope)</label>
+      <input id="diffAgainst" placeholder="asm-..." />
+      <button id="diffBtn" class="ghost" style="margin-top:8px">Compare</button>
+    </div>
+    <div id="diffResult"></div>
   </div>
 </main>
 </div>
@@ -835,6 +843,27 @@ const decideApproval = entry(async (id, approved, btn) => {
   } finally {
     if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
   }
+});
+
+function renderDiff(d) {
+  const section = (label, cls, list) => `
+    <div class="mono" style="margin-top:6px"><span class="pill ${cls}">${list.length} ${esc(label)}</span></div>
+    ${list.map(f => `<div class="mono" style="padding:2px 0 2px 10px">${esc(f.severity)} -- ${esc(f.title)} (${esc(f.asset)}${f.port ? ':' + esc(f.port) : ''})</div>`).join('')}`;
+  $('#diffResult').innerHTML = `
+    <div class="card">
+      <div class="mono">comparing ${esc(d.before_id)} -&gt; ${esc(d.after_id)}</div>
+      ${section('new', 'sev-critical', d.new)}
+      ${section('fixed', 'sev-low', d.fixed)}
+      ${section('persisting', 'sev-medium', d.persisting)}
+    </div>`;
+}
+
+$('#diffBtn').onclick = busyEntry($('#diffBtn'), async () => {
+  const beforeId = $('#diffAgainst').value.trim();
+  if (!currentId) return showError('Start or select an assessment first');
+  if (!beforeId) return showError('Enter the earlier assessment ID to compare against');
+  const d = await api(`/assessments/${currentId}/diff/${beforeId}`);
+  renderDiff(d);
 });
 
 function render(){
