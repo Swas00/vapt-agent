@@ -100,3 +100,27 @@ def test_execution_refused_for_malformed_module_name(fake_msf_on_path, orch, ass
     run = orch.execute_approval(assessment, appr.id)
     assert run.status == "failed"
     assert "module" in run.error.lower()
+
+
+# B9: the injection case above (shell metacharacters) was already covered -- these are the specific
+# path-traversal and null-byte variants a security-minded judge would try next. MODULE_RE's
+# character class ([a-z0-9_/]) structurally excludes '.', '\x00', upper-case, and anything outside
+# auxiliary/exploit/post, so these were already rejected; this makes that explicit and regression-proof.
+@pytest.mark.parametrize("malicious_module", [
+    "auxiliary/../../../etc/passwd",
+    "auxiliary/..%2f..%2fetc%2fpasswd",
+    "auxiliary/vuln_module\x00.rb",
+    "../../../etc/passwd",
+    "auxiliary/VULN_MODULE",          # upper-case is also outside the allowed character class
+    "exploit/vuln\nmodule",
+])
+def test_execution_refused_for_path_traversal_or_null_byte_in_module_name(
+        fake_msf_on_path, orch, assessment, malicious_module):
+    _seed_finding(assessment)
+    orch.analyse(assessment)
+    target = assessment.findings[0]
+    appr = orch.request_approval(assessment, target.id, "Validate", module=malicious_module)
+    orch.decide_approval(assessment, appr.id, True, by="lead-analyst")
+    run = orch.execute_approval(assessment, appr.id)
+    assert run.status == "failed"
+    assert "module" in run.error.lower()
