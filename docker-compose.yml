@@ -1,0 +1,15 @@
+# FS-5: single-container convenience for running the API + UI. `data/` is a bind mount, not a
+# named volume, specifically so the backup plan in docs/DEPLOYMENT.md (rsync/cron against a plain
+# host path) works without reaching into Docker's volume storage.
+services:
+  vapt-agent:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # Optional: enables LLM-phrased rationale/summaries. The system is fully functional and
+      # deterministic without it (see vapt_agent/llm.py) -- never required for correctness.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped

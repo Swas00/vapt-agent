@@ -1,0 +1,35 @@
+# FS-5: systemd unit for running without Docker -- e.g. when a deployment needs nmap/nikto/
+# msfconsole installed directly on the host rather than inside a container. Copy to
+# /etc/systemd/system/vapt-agent.service, edit the two paths below, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now vapt-agent
+# See docs/DEPLOYMENT.md for the full walkthrough, including the audit.log backup plan.
+[Unit]
+Description=VAPT Agent (AI-powered VAPT API + UI)
+After=network.target
+Documentation=https://github.com/Swas00/vapt-agent/blob/main/docs/DEPLOYMENT.md
+
+[Service]
+Type=simple
+# A dedicated, unprivileged system account -- never run this as root. The targets this tool
+# scans are attacker-adjacent (see SECURITY.md); the service itself should hold the minimum
+# privilege it needs, same reasoning as the Dockerfile's non-root USER.
+User=vaptagent
+Group=vaptagent
+WorkingDirectory=/opt/vapt-agent
+Environment=PYTHONUNBUFFERED=1
+# Uncomment to enable LLM-phrased rationale/summaries (optional; never required for correctness):
+# Environment=ANTHROPIC_API_KEY=replace-me
+ExecStart=/opt/vapt-agent/.venv/bin/uvicorn vapt_agent.api:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+# Defense-in-depth sandboxing. NoNewPrivileges/ProtectSystem/ProtectHome are safe defaults for a
+# network service; ReadWritePaths is scoped to exactly the one directory this process needs to
+# write (./data -- the audit log, the SQLite stores, raw tool output).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vapt-agent/data
+
+[Install]
+WantedBy=multi-user.target

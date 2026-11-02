@@ -1,0 +1,105 @@
+# Deployment (FS-5)
+
+Two supported ways to run this outside a local dev checkout: Docker, or systemd directly on a
+host. Both are thin wrappers around the same `uvicorn vapt_agent.api:app` process the
+[README](../README.md) already uses for local development -- nothing deployment-specific changes
+about the application itself.
+
+## Option A: Docker
+
+```bash
+docker compose up -d --build
+```
+
+This builds the image from the repo's `Dockerfile`, binds port 8000, and bind-mounts `./data` into
+the container at `/app/data` -- the same directory the app already writes to when run locally, so
+backups (below) work the same way whether the process runs in a container or not.
+
+Set `ANTHROPIC_API_KEY` in the environment (or a `.env` file next to `docker-compose.yml`) to
+enable LLM-phrased rationale/summaries; it is optional, never required for correctness
+(`vapt_agent/llm.py` has a deterministic fallback for every LLM call site).
+
+The image does **not** bundle `nmap`/`nikto`/`msfconsole` -- see the Dockerfile's comment for why.
+Without them, live scanning fails cleanly (`ToolRun.status="unavailable"`, recorded as a
+limitation in the report) while import-based ingestion, correlation, risk scoring, reporting, and
+the UI all work normally. A deployment that genuinely needs live scanning from inside the
+container should derive from this image and install those tools in the derived `Dockerfile`.
+
+## Option B: systemd (bare host)
+
+Use this when live scanning needs `nmap`/`nikto`/`msfconsole` installed directly on the host
+rather than inside a container.
+
+```bash
+sudo useradd --system --create-home --home-dir /opt/vapt-agent vaptagent
+sudo -u vaptagent git clone <this repo> /opt/vapt-agent
+cd /opt/vapt-agent
+sudo -u vaptagent python3 -m venv .venv
+sudo -u vaptagent .venv/bin/pip install -r requirements.txt
+
+sudo cp deploy/vapt-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vapt-agent
+sudo systemctl status vapt-agent
+```
+
+The unit file runs as the dedicated `vaptagent` system account (never root), with
+`ProtectSystem=strict` and `ReadWritePaths` scoped to exactly `/opt/vapt-agent/data` -- the one
+directory this process needs to write to.
+
+## First login
+
+On first start (either option), the server bootstraps an `admin` account with a random generated
+password, logs it once (`accounts.ensure_bootstrap_admin`, surfaced via `logger.warning` -- see
+`journalctl -u vapt-agent` for systemd, or `docker compose logs` for Docker), and forces a password
+change at first login. The password is also written once to `data/bootstrap_admin` (mode `0600`)
+so a restart before first login doesn't orphan the account, and is deleted once the forced change
+is completed. Capture that first-boot log line; it is not printed again.
+
+## What's in `./data`, and what to back up
+
+| Path | What it is | Backed up how |
+|---|---|---|
+| `data/audit.log` | Hash-chained, append-only audit trail | Copy -- **never rotate/truncate** (see below) |
+| `data/auth.db` | Accounts: usernames, scrypt hashes, sessions | Copy (SQLite, stdlib, FS-1-adjacent) |
+| `data/assessments.db` | FS-1: every `Assessment` (plan, findings, approvals, events) | Copy |
+| `data/batches.db` | FS-4: `Batch` groupings | Copy |
+| `data/<assessment-id>/raw/` | Raw tool output the audit trail's SHA-256 hashes point at | Copy |
+| `data/<assessment-id>/report.pdf` | Last generated report for that assessment | Copy (regenerable from `assessments.db` via `POST .../report`) |
+
+`deploy/backup_data.sh <data-dir> <backup-root>` copies all of the above with `rsync -a` into a
+timestamped directory, with a `latest` symlink kept current. Run it from cron or a systemd timer:
+
+```cron
+0 * * * *  /opt/vapt-agent/deploy/backup_data.sh /opt/vapt-agent/data /mnt/backups/vapt-agent
+```
+
+For the Docker deployment, point `<data-dir>` at the host-side bind mount (`./data` next to
+`docker-compose.yml`) -- the backup script never needs to run inside the container.
+
+### Why `audit.log` specifically must never be rotated
+
+`vapt_agent/audit.py`'s hash chain covers every entry back to the first line of the file --
+`AuditLog.verify()` (surfaced at `GET /audit`, and demonstrated live in the UI) reads and verifies
+the *whole* file. A generic logrotate rule that truncates or renames-and-recreates the file would
+silently start a new, shorter chain on the next append, breaking the tamper-evidence property
+SECURITY.md documents and the `GET /audit` HTTP-level tests check -- with no error, just a chain
+that no longer covers the engagement's full history. Let it grow; back it up as a copy (as
+`backup_data.sh` does) rather than rotating the live file. If disk usage on a very long-running
+deployment is a genuine concern, archive and compress a dated copy out of band -- never the file
+the process is actively appending to.
+
+## Health check
+
+`GET /healthz` is unauthenticated, rate-limit-free, and returns only `{"status": "ok"}` -- wire it
+into a load balancer's or orchestrator's liveness probe (Docker Compose's `healthcheck:`,
+systemd's own process supervision already restarts on failure via `Restart=on-failure`).
+
+## Out of scope for this hackathon submission
+
+Multi-instance/horizontal scaling, a managed database (Postgres/etc.) in place of the SQLite files
+above, and TLS termination are all deliberately not addressed here -- this is a single-process,
+single-host deployment story sized to match the project's actual current scale (see
+`docs/HACKATHON_ROADMAP.md`'s Tier 5 section and SECURITY.md's "what this project is explicitly
+NOT claiming"). A reverse proxy (nginx/Caddy/Traefik) terminating TLS in front of either deployment
+option is the standard next step and isn't specific to this application.
