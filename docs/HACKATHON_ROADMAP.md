@@ -25,9 +25,9 @@ rather than just the PDF.
   field on every approval/decision is an unverified string the caller supplies, not an identity.
   Section 2 and the Critical checklist below cover this.
 - **End-to-End Coverage / Correlation / Risk / Report Quality** — all solidly built and tested.
-- **Efficiency & Robustness (5 pts)** — the weakest-tested of the eight criteria in practice: scan
-  execution is fully synchronous (confirmed below), so "monitor running jobs" (PS §5.3) isn't
-  really demonstrable yet — a long scan just makes the browser's fetch() hang.
+- **Efficiency & Robustness (5 pts)** — was the weakest-tested of the eight criteria; scan execution
+  is now backgrounded with a poll endpoint (CR-3), so "monitor running jobs" (PS §5.3) is
+  demonstrable live. `execute_approval` (Metasploit) is still synchronous by choice -- see §8.
 - **Testing** — 88 passing tests, but **zero of them exercise the actual HTTP API** (confirmed
   below: no `TestClient` anywhere in the test suite). Everything is tested through `orchestrator.py`
   directly, which is real and valuable, but it means the FastAPI routing/serialization/error-path
@@ -105,7 +105,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 
 | Feature | What's there | What's missing |
 |---|---|---|
-| Scan orchestration "monitor running jobs" (§5.3) | Status recorded on `ToolRun`/`PlanStep` | 🔴 **Confirmed synchronous**: `def run_step` (not `async def`), blocks on `subprocess.run()` until completion/timeout. The HTTP request itself just hangs — there's no live "running → done" transition the client can observe mid-scan. |
+| ~~Scan orchestration "monitor running jobs" (§5.3)~~ **(RESOLVED — CR-3)** | was: `def run_step` blocked on `subprocess.run()` until completion | `Orchestrator.start_step`/`finish_step` split the work; the API schedules `finish_step` as a `BackgroundTask` and exposes `GET /assessments/{id}/runs/{run_id}`; the UI polls it every 1.5s so "Approve & run" visibly goes proposed → running → done/failed. |
 | Confidence calibration / FP triage (§5.6 bonus row) | One heuristic (`single tool + info + low confidence`) | No calibration against outcome history, no cross-rule triage |
 | Finding-driven replanning breadth | Web + infra-CVE triggers | No DNS/SNMP/cloud-metadata triggers |
 | Remediation tracking | Findings have a static `solution` string | No lifecycle (open → remediating → verified-fixed → retested) |
@@ -117,8 +117,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 |---|---|---|
 | ~~**Any authentication on the API**~~ **(RESOLVED — CR-1, see §8)** | was: `grep … api.py` → zero hits | Anyone reaching the port can approve active validation, impersonate any `by=` identity in the audit trail, pull reports. Directly weakens §13's "every action is attributable." |
 | **API-level rate limiting** | No `slowapi`/limiter/middleware anywhere; not in `requirements.txt` | A buggy or malicious client can hammer `/plan/{id}/run` (triggers real scans) or `/approvals/{id}/execute` (triggers Metasploit) with no throttle |
-| **Upload size/type limits** | `dest.write_bytes(await file.read())` — whole file buffered, no size check, no content-type allow-list before parsing | A large/malformed upload can exhaust memory; defusedxml protects against XXE but not against a 2GB file |
-| **Async/background scan execution** | `def run_step` synchronous (see 2.2) | No "monitor running jobs" experience; no cancel |
+| ~~**Upload size/type limits**~~ **(RESOLVED — CR-2)** | was: whole file buffered, no size check | 25MB cap enforced via chunked read (413 on overflow); a malformed import now 400s cleanly instead of a raw parse-exception 500 |
+| ~~**Async/background scan execution**~~ **(RESOLVED — CR-3)** | was: `def run_step` synchronous | `start_step`/`finish_step` + `BackgroundTask` + poll endpoint (see 2.2). Cancel is still not implemented (A2, unchanged). |
 | **Any FastAPI-level test (`TestClient`)** | `grep -rln "TestClient" tests/ vapt_agent/` → zero hits | 88/88 passing tests never once go through HTTP routing, request parsing, or file-upload handling — only `orchestrator.py` directly |
 | **Persistence beyond the process lifetime** | `ASSESSMENTS: dict[str, Assessment] = {}` at module scope in `api.py` | Restarting the server during a live demo loses all state. (Raw tool outputs + audit log *do* survive on disk; the in-memory Assessment index does not.) |
 | **Export formats besides PDF** | Only `report.generate()` → PDF | No JSON/CSV export for a SIEM/ticketing handoff |
@@ -132,7 +132,7 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 ## 3. Exhaustive Implementation Checklist
 
 ### A. Core Functionalities
-- [ ] A1. Async/background execution for `run_step` and `execute_approval`, with a pollable job status endpoint
+- [x] A1. Async/background execution for `run_step`, with a pollable job status endpoint *(done — CR-3; `execute_approval`/Metasploit deliberately left synchronous, see §8)*
 - [ ] A2. "Cancel a running scan" action (kill the subprocess, mark `ToolRun.status="cancelled"`)
 - [ ] A3. `GET /assessments` pagination (`limit`/`offset`) and basic filtering (`state=`)
 - [ ] A4. Re-run `demo.py`/`live_demo.py` against the organizer's actual lab target once issued (PS §9.1)
@@ -145,8 +145,8 @@ Status legend: ✅ Done & verified this session · 🟡 Partial · ⬜ Missing �
 
 ### B. Security and Privacy
 - [x] B1. **Minimal actor authentication** *(done — CR-1)* — at minimum, a shared bearer token / API key required on all mutating endpoints, with the authenticated identity (not a client-supplied string) written to `by`/`decided_by`
-- [ ] B2. Upload size cap (e.g. 25MB) enforced before `file.read()`, with a clear 413 response
-- [ ] B3. Upload content-type/extension allow-list per tool (reject a `.xml` labeled import that isn't well-formed XML before handing it to the parser)
+- [x] B2. Upload size cap *(done — CR-2: 25MB, chunked read, clear 413)*
+- [ ] B3. Upload content-type/extension allow-list per tool *(partial: a malformed import now 400s cleanly instead of crashing -- CR-2 -- but there's still no allow-list rejecting a well-formed-but-wrong-tool file before parsing)*
 - [ ] B4. Rate limiting on scan-triggering and Metasploit-execution endpoints specifically (not just globally)
 - [ ] B5. Security response headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a CSP) on the FastAPI app and the static UI
 - [ ] B6. `SECURITY.md` documenting the threat model: this app is designed to run against untrusted scan output — state that explicitly, since it's the system's whole selling point
@@ -239,8 +239,8 @@ Explicitly **not** recommended: adding more LLM calls for their own sake, a chat
 | # | Test | Type | Currently exists? |
 |---|---|---|---|
 | T1 | Full create→report flow via `TestClient`, not direct orchestrator calls | API/integration | ⬜ No |
-| T2 | Upload >size-cap file → 413 | API, negative | ⬜ No (cap doesn't exist yet) |
-| T3 | Upload a `.xml`-named file containing JSON → clean error, not a stack trace | API, negative | ⬜ No |
+| T2 | Upload >size-cap file → 413 | API, negative | ✅ Yes (`test_oversized_import_rejected_with_413_not_buffered`) |
+| T3 | Upload a `.xml`-named file containing JSON → clean error, not a stack trace | API, negative | ✅ Yes (`test_malformed_import_body_is_a_clean_400_not_a_500`) |
 | T4 | Unauthenticated request → 401 | API, auth | ✅ Yes (`test_api_auth.py`, parametrized over every POST route + a meta-test) |
 | T5 | `by=` reflects authenticated identity, not client-supplied string | Security | ✅ Yes |
 | T6 | Two concurrent `run_step` calls on one assessment | Concurrency | ⬜ No |
@@ -265,8 +265,8 @@ doesn't silently regress on the next UI edit.
 | ID | Task | Description | Why required | Expected outcome | Frontend | Backend | DB | Security | Depends on | Acceptance criteria |
 |---|---|---|---|---|---|---|---|---|---|---|
 | ✅ **DONE** — CR-1 | Minimal API authentication | Require a bearer token (env-configured shared secret, or per-analyst token map) on every mutating endpoint; derive `by`/`decided_by` from the authenticated identity, ignore any client-supplied value | §13 "every action attributable"; currently false — `by=` is free text | Audit trail entries are trustworthy | Add token input to UI, send as header | FastAPI `Depends()` auth guard on all POST routes; `audit.append(actor=...)` uses the verified identity | N/A (in-memory) | Closes the biggest live gap | None | Unauthenticated POST → 401; `by=` in the response always matches the token's mapped identity, never the query string |
-| CR-2 | Upload size + type cap | Read `Content-Length` (or stream with a cap) before buffering; reject >25MB with 413; sniff the first bytes against the declared tool's expected format before parsing | Prevents memory-exhaustion DoS on a public-facing demo instance | A malformed/huge upload fails fast and cleanly | Show the 413 message in the import panel | `UploadFile` size check in `api.import_result` | N/A | Closes an unbounded-memory gap | None | 30MB upload → 413, not a hang or crash |
-| CR-3 | Async scan execution + status polling | Move `run_step`/`execute_approval` to `BackgroundTasks`; add `GET /assessments/{id}/runs/{run_id}` returning live status; UI polls every 1–2s while a run is `running` | PS §5.3 explicitly requires "monitor running jobs" — today it's un-demonstrable | Judges can watch a scan go pending→running→done live | Poll loop + visible spinner/progress on the running step's card | `BackgroundTasks`, a `run_id`→status lookup, `ToolRun` status transitions already exist, just need to be observable mid-flight | N/A | Low (internal only) | None | Click "Approve & run," UI shows "running" within 2s, updates to "done" without a page reload, request returns immediately rather than hanging |
+| ✅ **DONE** — CR-2 | Upload size + type cap | Read the body in capped chunks, rejecting >25MB with 413 before it's ever written to disk; a file that doesn't parse as its declared tool's format now 400s with a clear reason instead of a raw-exception 500 | Prevents memory-exhaustion DoS on a public-facing demo instance | A malformed/huge upload fails fast and cleanly | (413/400 text surfaces via the existing `alert()` on import failure) | `_read_upload_capped` + a parse-error catch in `api.import_result` | N/A | Closes an unbounded-memory gap | None | 30MB upload → 413; a JSON file labeled `.nessus` → 400, not a stack trace |
+| ✅ **DONE** — CR-3 | Async scan execution + status polling | `Orchestrator.run_step` split into `start_step` (sync, marks 'running') + `finish_step` (the actual blocking scan); API schedules `finish_step` as a `BackgroundTask` and adds `GET /assessments/{id}/runs/{run_id}`; UI polls every 1.5s while `running` | PS §5.3 explicitly requires "monitor running jobs" — today it's un-demonstrable | Judges can watch a scan go pending→running→done live | Poll loop in `runStep()`/`pollRun()`, step card re-renders on each refresh | `BackgroundTasks`, per-assessment lock guarding the shared `ToolRun`/`PlanStep` mutation | N/A | Low (internal only) | None | Click "Approve & run," UI shows "running" immediately, updates to "done" without a page reload, request returns immediately rather than hanging. `execute_approval` (Metasploit) is still synchronous -- deliberately deferred, it's gated/rare, not the demoable "monitor running jobs" path. |
 | CR-4 | Committed sample PDF report | Generate a sample report (already working via `demo.py`) and commit it to a tracked path (`docs/sample_report.pdf`), refreshed whenever report.py changes meaningfully | PS §9.3 deliverable — currently only producible, not present in the repo | Judges can open the PDF directly from the repo without running anything | N/A | N/A | N/A | N/A | None | File exists at a tracked path, opens cleanly, reflects current report.py output |
 | CR-5 | API-level test suite (`TestClient`) | Cover the full create→import→analyse→approve→execute→report flow through real HTTP | Zero current coverage of the actual demo-time code path (routing, serialization, file upload, error responses) | Confidence the live demo's actual code path is tested, not just the library underneath it | N/A | N/A | N/A | Surfaces auth/upload bugs before judges do | CR-1, CR-2 (to test the new guards) | `pytest tests/test_api.py` green, covers every route in `api.py` |
 
@@ -398,7 +398,49 @@ the matching test fail):
 4. *Expected auth failures logged as uncaught promise rejections* — handlers now end quietly via a
    `HandledError` wrapper while real exceptions still propagate.
 
-**Still open and honest about it:** guessing is unthrottled until HP-1; the upload is still fully
-buffered with no size cap until CR-2 (an unauthenticated upload is rejected before it touches disk,
-but FastAPI parses multipart bodies before dependencies run, so a *size cap at the ASGI layer* — not
-auth — is the right fix for that); tokens live in process env / a dev file, not a secret manager.
+**Still open and honest about it (as of CR-1):** guessing is unthrottled until HP-1; the upload is
+still fully buffered with no size cap until CR-2; tokens live in process env / a dev file, not a
+secret manager.
+
+---
+
+## Appendix — CR-2 delivery notes
+
+**Shipped:**
+- `api._read_upload_capped`: reads the multipart body in 1MB chunks, raising 413 the moment the
+  running total crosses 25MB -- rather than buffering the whole file first and checking after,
+  which is what the original `dest.write_bytes(await file.read())` effectively did.
+- A parse-error catch (`xml.etree.ElementTree.ParseError`, `json.JSONDecodeError`) around
+  `orch.import_result` in the route, turning a malformed/mislabeled import into a plain 400 with
+  the reason instead of an unhandled 500 (verified: before the fix, posting JSON labeled `.nessus`
+  produced a bare 500).
+- Tests: `test_oversized_import_rejected_with_413_not_buffered`,
+  `test_malformed_import_body_is_a_clean_400_not_a_500` (both in `tests/test_api_auth.py`).
+
+**Still open:** no content-type/extension allow-list per tool (B3) -- a well-formed XML file
+labeled as the wrong tool still parses as whatever that tool's adapter expects, it just won't 500.
+
+## Appendix — CR-3 delivery notes
+
+**Shipped:**
+- `Orchestrator.run_step` split into `start_step` (validates, marks the step/run `running`,
+  returns immediately) and `finish_step` (the actual blocking `adapter.run()` + ingestion, folding
+  the result back into the *same* `ToolRun` object in place so a client polling by run id sees one
+  record transition, not two). `run_step` itself survives as a synchronous wrapper calling both,
+  so `live_demo.py` and direct-orchestrator tests needed no changes.
+- `api.run_step` schedules `finish_step` as a FastAPI `BackgroundTask`; added
+  `GET /assessments/{id}/runs/{run_id}` (404 if unknown) for polling.
+- A per-assessment `threading.Lock` (`Orchestrator._lock`) guards the shared `ToolRun`/`PlanStep`
+  mutation between the request thread and the background thread.
+- UI (`runStep`/`pollRun` in `static/index.html`): awaits the (fast) POST, refreshes to show
+  `running` immediately, polls the run endpoint every 1.5s, refreshes again on completion.
+- Tests: `test_start_step_marks_running_before_finish_step_completes_it` (orchestrator-level,
+  confirms the in-place update keeps one run id), `test_run_step_returns_running_immediately_and_is_pollable_to_completion`
+  + `test_poll_unknown_run_id_404s` (HTTP-level), and a jsdom test confirming the UI actually calls
+  the poll endpoint and re-renders to the completed state.
+
+**Deliberately not done:** `execute_approval` (Metasploit) stays synchronous. It's gated behind a
+human approval and run far less often than a scan step, so the "request hangs" cost is much lower,
+and it's not the path PS §5.3's "monitor running jobs" demo moment is about -- that's `run_step`.
+Revisit under HP-series if there's time left. Cancelling a running scan (A2) is also still
+unimplemented.
