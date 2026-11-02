@@ -204,6 +204,43 @@ def test_create_batch_raises_when_every_target_is_rejected(orch):
         orch.create_batch("sweep", "Assess.", ["8.8.8.8"], scope)
 
 
+def test_concurrent_start_step_calls_on_the_same_step_only_one_wins(orch, assessment):
+    """F4: two threads calling start_step for the SAME approved step at once (e.g. a doubled
+    click, or a client retrying a request that actually succeeded) must not both launch a scan.
+    Exactly one call should return a ToolRun; every other concurrent call should raise ScopeError
+    because the step is no longer 'approved' by the time it gets the lock, and exactly one
+    ToolRun must have been appended to a.runs -- not one per racing thread."""
+    import threading
+
+    step = next(s for s in assessment.plan if s.tool == "nmap")
+    orch.approve_step(assessment, step.id, True)
+
+    results = []
+    barrier = threading.Barrier(8)
+
+    def attempt():
+        barrier.wait()
+        try:
+            run = orch.start_step(assessment, step.id)
+            results.append(("ok", run))
+        except ScopeError as e:
+            results.append(("rejected", str(e)))
+
+    threads = [threading.Thread(target=attempt) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    successes = [r for r in results if r[0] == "ok"]
+    rejections = [r for r in results if r[0] == "rejected"]
+    assert len(successes) == 1
+    assert len(rejections) == 7
+    assert len(assessment.runs) == 1
+    assert assessment.runs[0].id == successes[0][1].id
+    assert step.run_id == successes[0][1].id
+
+
 def test_scope_blocks_step_run_outside_target(orch, assessment):
     from vapt_agent.models import PlanStep
     bad = PlanStep(tool="nmap", target="8.8.8.8", preset="discovery", rationale="x")

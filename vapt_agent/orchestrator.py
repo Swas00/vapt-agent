@@ -96,15 +96,21 @@ class Orchestrator:
         """Validate and mark a step 'running', returning a placeholder ToolRun immediately.
         The actual (blocking) scan is performed by finish_step -- callers that want the
         request to return right away schedule that as a background task; run_step below
-        calls both back-to-back for callers that want the old synchronous behaviour."""
+        calls both back-to-back for callers that want the old synchronous behaviour.
+
+        F4: the 'is this step actually still approved' check and the mutation that flips it to
+        'running' must happen under the SAME lock acquisition, not one before it and one inside
+        it -- otherwise two concurrent calls for the same step_id (e.g. a doubled click, or a
+        retried request racing the original) can both pass the check before either has flipped
+        the status, and both end up appending a ToolRun and launching the same scan twice."""
         step = next(s for s in a.plan if s.id == step_id)
-        if step.status not in ("approved",):
-            raise ScopeError(f"step {step_id} is '{step.status}', not approved")
         if self.adapters.get(step.tool) is None:
             raise ScopeError(f"no adapter registered for tool '{step.tool}'")
-        run = ToolRun(tool=step.tool, mode=step.mode, target=step.target, preset=step.preset,
-                      status="running")
         with self._lock(a):
+            if step.status not in ("approved",):
+                raise ScopeError(f"step {step_id} is '{step.status}', not approved")
+            run = ToolRun(tool=step.tool, mode=step.mode, target=step.target, preset=step.preset,
+                          status="running")
             a.runs.append(run)
             step.run_id, step.status = run.id, "running"
         self.audit.append("agent", "tool.start", assessment=a.id, run=run.id, tool=run.tool,
