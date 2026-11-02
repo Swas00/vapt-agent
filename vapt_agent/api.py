@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import hmac as _hmac
+import io as _io
 import json as _json
 import re
 import sys
 import threading
 import time
 import xml.etree.ElementTree as _ET
+import zipfile as _zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -630,6 +632,33 @@ def report(assessment_id: str, principal: Principal = Depends(require_role("anal
     return FileResponse(str(out), media_type="application/pdf", filename=f"VAPT-{a.id}.pdf")
 
 
+def _scoped_audit_entries(assessment_id: str) -> list[dict]:
+    return [e for e in audit.entries() if e.get("details", {}).get("assessment") == assessment_id]
+
+
+@app.post("/assessments/{assessment_id}/evidence-pack")
+def evidence_pack(assessment_id: str, principal: Principal = Depends(require_role("analyst"))):
+    """A zip of this assessment's audit trail, raw tool outputs, and PDF report -- independently
+    verifiable by someone who wasn't in the room for the live demo, without re-running anything."""
+    a = _get(assessment_id)
+    report_path = DATA_DIR / assessment_id / "report.pdf"
+    generate_report(a, report_path)
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("assessment.json", a.model_dump_json(indent=2))
+        zf.writestr("audit_log.json", _json.dumps(_scoped_audit_entries(assessment_id), indent=2))
+        zf.write(report_path, arcname="report.pdf")
+        raw_dir = DATA_DIR / assessment_id / "raw"
+        if raw_dir.exists():
+            for f in sorted(raw_dir.iterdir()):
+                if f.is_file():
+                    zf.write(f, arcname=f"raw/{f.name}")
+    audit.append(principal.username, "evidence_pack.generated", assessment=a.id)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename=evidence-pack-{assessment_id}.zip"})
+
+
 @app.get("/audit")
 def get_audit(assessment_id: str | None = None, principal: Principal = Depends(require_role("viewer"))):
     """`assessment_id` narrows the returned entries to one assessment -- for the audit-trail
@@ -637,9 +666,7 @@ def get_audit(assessment_id: str | None = None, principal: Principal = Depends(r
     the rest of the server's traffic in the way. The hash-chain is always verified against the
     *full* log regardless of the filter, since that's what the chain actually protects."""
     ok, msg = audit.verify()
-    entries = audit.entries()
-    if assessment_id:
-        entries = [e for e in entries if e.get("details", {}).get("assessment") == assessment_id]
+    entries = _scoped_audit_entries(assessment_id) if assessment_id else audit.entries()
     return {"ok": ok, "message": msg, "entries": entries}
 
 

@@ -467,6 +467,41 @@ def test_import_and_report_are_attributed(env):
     assert env.entries("report.generated")[0]["actor"] == "bob"
 
 
+def test_evidence_pack_contains_report_audit_and_raw_output(env):
+    import zipfile
+    from io import BytesIO
+
+    a = create_assessment(env, "bob")
+    hdr = session(env, "bob")
+    assert import_nessus(env, a["id"], hdr).status_code == 200
+
+    r = env.client.post(f"/assessments/{a['id']}/evidence-pack", headers=hdr)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert f"evidence-pack-{a['id']}.zip" in r.headers["content-disposition"]
+
+    zf = zipfile.ZipFile(BytesIO(r.content))
+    names = zf.namelist()
+    assert "assessment.json" in names
+    assert "audit_log.json" in names
+    assert "report.pdf" in names
+    assert any(n.startswith("raw/") for n in names)
+    assert zf.read("report.pdf")[:5] == b"%PDF-"
+
+    import json
+    audit_entries = json.loads(zf.read("audit_log.json"))
+    assert all(e["details"].get("assessment") == a["id"] for e in audit_entries)
+    assert any(e["action"] == "tool.import" for e in audit_entries)
+    assert env.entries("evidence_pack.generated")[0]["actor"] == "bob"
+
+
+def test_evidence_pack_requires_analyst_role(env):
+    a = create_assessment(env, "alice")
+    viewer_hdr = session(env, "victor")
+    r = env.client.post(f"/assessments/{a['id']}/evidence-pack", headers=viewer_hdr)
+    assert r.status_code == 403
+
+
 def test_oversized_import_rejected_with_413_not_buffered(env):
     a = create_assessment(env, "bob")
     hdr = session(env, "bob")
