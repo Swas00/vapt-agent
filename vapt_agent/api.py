@@ -20,6 +20,7 @@ import hmac as _hmac
 import io as _io
 import json as _json
 import logging
+import os
 import re
 import threading
 import time
@@ -71,7 +72,9 @@ def get_store() -> accounts.AccountStore:
     global account_store
     if account_store is None:
         account_store = accounts.AccountStore(DATA_DIR / "auth.db")
-        banner = accounts.ensure_bootstrap_admin(account_store, BOOTSTRAP_MARKER)
+        banner = accounts.ensure_bootstrap_admin(
+            account_store, BOOTSTRAP_MARKER,
+            fixed_password=os.environ.get("VAPT_BOOTSTRAP_ADMIN_PASSWORD") or None)
         if banner:
             logger.warning(banner)
     return account_store

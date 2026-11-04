@@ -976,6 +976,21 @@ def test_bootstrap_admin_created_on_first_use_and_banner_never_reused(tmp_path, 
         assert "admin" not in caplog.text                # no password reprinted
 
 
+def test_bootstrap_admin_uses_env_var_password_when_set(tmp_path, monkeypatch, caplog):
+    # A deployment with no persistent disk (its account DB resets on every restart) needs a
+    # deterministic admin password rather than a fresh random one buried in that restart's own
+    # logs -- VAPT_BOOTSTRAP_ADMIN_PASSWORD is how an operator pins one.
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(api, "BOOTSTRAP_MARKER", tmp_path / "bootstrap_admin")
+    monkeypatch.setattr(api, "account_store", None)
+    monkeypatch.setenv("VAPT_BOOTSTRAP_ADMIN_PASSWORD", "a-pinned-bootstrap-pw-1")
+    with caplog.at_level("WARNING", logger="vapt_agent.api"):
+        store = api.get_store()
+        u = store.authenticate("admin", "a-pinned-bootstrap-pw-1")
+        assert u.role == "admin" and u.must_change_password is True
+        assert "VAPT_BOOTSTRAP_ADMIN_PASSWORD" in caplog.text
+
+
 # FS-1: persistent storage for Assessment objects across restarts.
 
 def test_assessment_survives_a_simulated_restart(env):

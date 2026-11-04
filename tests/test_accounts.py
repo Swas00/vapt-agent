@@ -402,6 +402,19 @@ def test_bootstrap_creates_admin_once(tmp_path):
     assert again is None       # idempotent: doesn't recreate or reprint
 
 
+def test_bootstrap_uses_fixed_password_when_given(tmp_path):
+    # A deployment whose disk is wiped on every restart (e.g. a free hosting tier with no
+    # persistent volume) can't rely on a random password that only ever appears in that restart's
+    # own logs, which an external visitor has no way to read -- VAPT_BOOTSTRAP_ADMIN_PASSWORD lets
+    # it pin a known, documented password instead, while still forcing a change at first login.
+    store = AccountStore(tmp_path / "auth.db")
+    marker = tmp_path / "bootstrap_admin"
+    banner = accounts.ensure_bootstrap_admin(store, marker, fixed_password="a-fixed-test-password-1")
+    assert banner and "a-fixed-test-password-1" in banner and "VAPT_BOOTSTRAP_ADMIN_PASSWORD" in banner
+    u = store.authenticate("admin", "a-fixed-test-password-1")
+    assert u.role == "admin" and u.must_change_password is True
+
+
 def test_bootstrap_skipped_if_any_user_exists(tmp_path):
     store = AccountStore(tmp_path / "auth.db")
     store.create_user("bob", GOOD_PW, "lead")

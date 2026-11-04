@@ -429,11 +429,20 @@ class AccountStore:
 # Bootstrap: first-run admin account
 # ---------------------------------------------------------------------------
 
-def ensure_bootstrap_admin(store: AccountStore, marker_path: Path) -> Optional[str]:
-    """On a store with no users at all, create 'admin' with a random generated password that must
-    be changed at first login, and persist it (mode 0600) so a restart before first login doesn't
-    orphan the account. The file is deleted once that admin account is no longer pending a forced
-    change (first login + password change), so a plaintext password doesn't sit on disk forever.
+def ensure_bootstrap_admin(store: AccountStore, marker_path: Path,
+                           fixed_password: Optional[str] = None) -> Optional[str]:
+    """On a store with no users at all, create 'admin' with a password that must be changed at
+    first login, and persist it (mode 0600) so a restart before first login doesn't orphan the
+    account. The file is deleted once that admin account is no longer pending a forced change
+    (first login + password change), so a plaintext password doesn't sit on disk forever.
+
+    `fixed_password`, if given (from the VAPT_BOOTSTRAP_ADMIN_PASSWORD env var), is used instead
+    of a freshly random one -- for a deployment whose disk is wiped on every restart (e.g. a free
+    hosting tier with no persistent volume), a random password is only ever visible in that
+    restart's own logs, which an external visitor has no way to read; a fixed, documented password
+    keeps the account reachable across those resets while still forcing a real password change at
+    first login, same as the random-password path. Falls back to random if unset, which is the
+    only reasonable default for a deployment that genuinely does persist its disk.
     Returns the startup banner text, or None if no bootstrap was needed."""
     marker_path = Path(marker_path)
     admin = store.get_user("admin")
@@ -443,18 +452,19 @@ def ensure_bootstrap_admin(store: AccountStore, marker_path: Path) -> Optional[s
         return None
     if store.count_users() > 0:
         return None     # users exist under other names; nothing to bootstrap
-    password = secrets.token_urlsafe(18)
+    password = fixed_password or secrets.token_urlsafe(18)
     store.create_user("admin", password, "admin", must_change_password=True)
     import os
     fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write(password + "\n")
     os.chmod(marker_path, 0o600)
+    source_note = " (from VAPT_BOOTSTRAP_ADMIN_PASSWORD)" if fixed_password else ""
     return (
         "\n" + "=" * 72 + "\n"
         "  No accounts exist -> created a bootstrap admin:\n\n"
         "      username: admin\n"
-        f"      password: {password}\n\n"
+        f"      password: {password}{source_note}\n\n"
         "  You will be required to change this password at first login.\n"
         f"  (also persisted at {marker_path}, mode 0600, until the password is changed)\n"
         + "=" * 72 + "\n"
