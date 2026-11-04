@@ -131,7 +131,7 @@ get no tag).
 | 9.2 Architecture overview (models, orchestration, adapters, data flow, state/memory, security boundaries) | ✅ | `docs/ARCHITECTURE.md` |
 | 9.3 Sample AI-generated, evidence-backed VAPT report (PDF) | ✅ | Committed and tracked at `docs/sample_report.pdf`; `demo.py` regenerates the live equivalent at `data/sample_report.pdf` (gitignored, since it's a build artifact). |
 | 9.4 Source repository: setup, dependencies, licensing, execution instructions | ✅ | `README.md`, `requirements.txt`, pushed to [github.com/Swas00/vapt-agent](https://github.com/Swas00/vapt-agent) |
-| 9.5 Human-approval demonstration + decision/audit trace | ✅ | approval workflow + hash-chained `audit.py`; ⬜ **record an actual demo clip/walkthrough for judges** (this is a presentation task, not code) |
+| 9.5 Human-approval demonstration + decision/audit trace | ✅ | approval workflow + hash-chained `audit.py`; sequenced walkthrough script ready at `docs/DEMO_SCRIPT.md`; ⬜ **record the actual clip** (a presentation task, not code) |
 | 9.6 Integration status matrix: limitations, assumptions, unsupported scenarios | ✅ | `docs/INTEGRATIONS.md` |
 
 ## 10. Judges' Live Demonstration Checklist (11 §)
@@ -146,9 +146,10 @@ get no tag).
 | 6 | Download report, trace a finding back to source evidence | ✅ | evidence snippet + raw_ref + a truncated SHA-256 of the raw artifact file shown per evidence item in the PDF, for a verifiable chain-of-custody story |
 | 7 | Safe failure handling + honest unsupported-integration disclosure | ✅ | `ToolRun.status` failure modes recorded + shown in limitations; integration matrix is honest |
 
-⬜ **To do before the live demo**: deliberately rehearse one scope-rejection (scan something outside
-the registered target) and one tool failure (e.g. a bad target host) so judges see graceful handling
-live, not just in theory.
+✅ **Rehearsed against the live deployment**: an unattested/public-IP assessment create is rejected
+with a specific `400` (not a generic failure), and a malformed/wrong-extension tool import fails
+cleanly with a specific `400` rather than a raw exception. See `docs/DEMO_SCRIPT.md` §2/§5 for the
+exact sequence to reproduce live on camera.
 
 ## 11. Judging Criteria (100 pts) — where to spend remaining effort
 
@@ -195,6 +196,5 @@ What's left is not code, and this document shouldn't claim otherwise:
 1. **9.1**: re-run `demo.py`/`live_demo.py` against the organizer's actual lab target once issued —
    genuinely blocked on an address this project has no way to obtain; see `docs/HACKATHON_ROADMAP.md`
    item A4 for the full disposition.
-2. **9.5 / judges' checklist item 7**: record an actual demo clip/walkthrough, and rehearse one
-   scope-rejection and one tool-failure moment live so judges see graceful handling in person, not
-   just in the code.
+2. **9.5 / judges' checklist item 7**: record the actual demo clip — `docs/DEMO_SCRIPT.md` has the
+   full sequenced walkthrough, including the two rehearsed-live failure moments, ready to follow.
