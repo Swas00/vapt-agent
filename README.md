@@ -9,6 +9,12 @@ Hackathon (Problem Statement 1: *AI-Powered Unified VAPT Agent*).
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#4-security-boundaries) for how it's wired in. Active
 > exploitation (Metasploit) never runs without a recorded human approval.
 
+**Live demo**: https://vapt-agent-oyvp.onrender.com/ui/ — login credentials provided separately
+(not committed here, since this repository is public). Hosted on Render's free tier, so live
+scanning (nmap/nikto/msfconsole) is unavailable there by design (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md));
+import-based ingestion, correlation, risk scoring, reporting, and the full UI all work normally.
+The first login after any redeploy forces a password change — expected, not a bug.
+
 ## What it does
 
 1. **Analyst request** — natural-language request + authorized target/scope.
