@@ -13,7 +13,7 @@ services:
     plan: free
     healthCheckPath: /healthz
     envVars:
-      - key: VAPT_ANALYST_TOKENS
+      - key: VAPT_BOOTSTRAP_ADMIN_PASSWORD
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false

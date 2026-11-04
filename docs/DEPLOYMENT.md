@@ -57,11 +57,13 @@ repo root drives this:
    `render.yaml` and proposes one `docker` web service on the free plan.
 3. Render will prompt for the two secrets marked `sync: false` in `render.yaml` — set them before
    the first deploy:
-   - `VAPT_ANALYST_TOKENS` — e.g. generate with
-     `python3 -c 'import secrets;print(secrets.token_urlsafe(24))'` and set it as
-     `<token>:<your-name>`. Without this, the server falls back to dev mode and prints a
-     single-use token to the service's log on boot instead (see "First login" below) — fine for a
-     quick demo, but the token changes on every redeploy/restart.
+   - `VAPT_BOOTSTRAP_ADMIN_PASSWORD` — a password of your choosing (12+ characters) for the
+     bootstrap `admin` account. Without this, the server falls back to generating a random one and
+     printing it once to the service's log (see "First login" below) — fine on a host with a
+     persistent disk, but on the free plan's ephemeral disk a *new* random password gets generated
+     on every redeploy/sleep-wake cycle, and the only place it's ever shown is a log you (and
+     nobody else, e.g. a judge) can read. Pinning it here keeps the login known and working across
+     every restart. The account still forces a password change at first login either way.
    - `ANTHROPIC_API_KEY` — optional, enables LLM-phrased report prose; leave blank to use the
      deterministic template.
 4. Deploy. Render builds the existing `Dockerfile` as-is — no changes needed.
@@ -80,12 +82,16 @@ subprocess scanning needs a build that installs them.
 
 ## First login
 
-On first start (either option), the server bootstraps an `admin` account with a random generated
-password, logs it once (`accounts.ensure_bootstrap_admin`, surfaced via `logger.warning` -- see
-`journalctl -u vapt-agent` for systemd, or `docker compose logs` for Docker), and forces a password
-change at first login. The password is also written once to `data/bootstrap_admin` (mode `0600`)
-so a restart before first login doesn't orphan the account, and is deleted once the forced change
-is completed. Capture that first-boot log line; it is not printed again.
+On first start (any option), the server bootstraps an `admin` account and forces a password change
+at first login. Its initial password is `VAPT_BOOTSTRAP_ADMIN_PASSWORD` if set, otherwise a random
+one, either way logged once (`accounts.ensure_bootstrap_admin`, surfaced via `logger.warning` --
+see `journalctl -u vapt-agent` for systemd, or `docker compose logs`/Render's log viewer for
+Docker). The password is also written once to `data/bootstrap_admin` (mode `0600`) so a restart
+before first login doesn't orphan the account, and is deleted once the forced change is completed.
+On a host with persistent disk, capture that first-boot log line -- it is not printed again. On a
+host without one (Render's free plan), set `VAPT_BOOTSTRAP_ADMIN_PASSWORD` instead (see "Deploying
+to Render" above) so you're never dependent on reading a log from a container that may already be
+gone by the time you look.
 
 ## What's in `./data`, and what to back up
 

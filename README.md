@@ -78,25 +78,43 @@ brew install nmap nikto     # one-time
 
 ### Authentication — who did what
 
-Every state-changing endpoint (create assessment, approve/run a step, import, analyse, request/decide/
-execute an approval, generate the report) requires `Authorization: Bearer <analyst token>`. Each token
-belongs to exactly one named analyst, and **that verified name — never anything the client sends — is what
-the audit log and the approval records store** (PS-1 §13: "every action is attributable"). A `by=` query
-parameter, if a client still sends one, is ignored. Read-only `GET` routes (the audit trail, integration
-matrix, assessment views) stay open so the trail is inspectable.
+Real accounts, not static tokens: username/password login (`vapt_agent/accounts.py`) backed by
+SQLite (`data/auth.db`), with server-side sessions and four ordered roles — `viewer < analyst <
+lead < admin`. Requesting active validation needs `analyst`; *approving or executing* it needs
+`lead` or `admin` — a real separation of duties. Every state-changing endpoint requires a valid
+session, and **the verified session's own username — never anything the client sends — is what the
+audit log and the approval records store** (PS-1 §13: "every action is attributable"). Read-only
+`GET` routes (the audit trail, integration matrix, assessment views) stay open so the trail is
+inspectable.
+
+A session is presented either way:
+- **Browser UI**: an `HttpOnly` cookie, set automatically on `POST /login`. Every mutating request
+  from the UI must also echo the response's `csrf_token` back as an `X-CSRF-Token` header — that
+  pairing is what stops a hostile page on another origin from riding the cookie.
+- **Scripts/API clients**: log in once (`POST /login`), then send the returned session id as
+  `Authorization: Bearer <session id>` on every call — no CSRF header needed for this path, since a
+  cross-site page can make a browser attach a cookie automatically but can't set a custom header.
 
 ```bash
-# real identities (tokens >= 16 chars; names [A-Za-z0-9._-]; "agent" and "system" are reserved
-# for automated audit-log actors and can't be assigned to a person):
-export VAPT_ANALYST_TOKENS="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))'):alice,$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))'):bob"
+curl -sS -c /tmp/vapt_cookies.txt -X POST $BASE/login \
+  -H "Content-Type: application/json" -d '{"username":"admin","password":"..."}'
+# then either keep using the cookie jar (-b /tmp/vapt_cookies.txt), or lift the session id out of
+# it and send it as "Authorization: Bearer <session id>" instead
 ```
 
-With `VAPT_ANALYST_TOKENS` unset, the server starts in **dev mode**: it generates one token for the identity
-`analyst`, prints it at startup, and persists it (mode `0600`) at `data/.dev_token` so `--reload` doesn't
-invalidate it. Paste the token into the UI's sign-in card (kept in `sessionStorage` — cleared when the tab
-closes). From a script: `curl -H "Authorization: Bearer $TOKEN" -X POST ...`. A malformed
-`VAPT_ANALYST_TOKENS` stops the server at startup rather than silently running open. Failed attempts are
-audited (throttled per client, and the presented token is never recorded).
+Passwords are hashed with scrypt (memory-hard, cost parameters embedded in the stored hash),
+minimum 12 characters, rejected if they contain the username or match a common-password list.
+Login is rate-limited per client IP (15/5min) in addition to per-account lockout with exponential
+backoff, and a failed attempt never reveals whether the username exists (constant-time comparison
+against a dummy hash either way).
+
+**First login**: on an account store with no users at all, the server bootstraps one `admin`
+account with a password that must be changed at first login, and prints it once to the server log
+(`accounts.ensure_bootstrap_admin`). Set `VAPT_BOOTSTRAP_ADMIN_PASSWORD` to pin that initial
+password to a known value instead of a random one — needed on any host whose disk doesn't persist
+across restarts (a free-tier deploy, say), where a random password printed to a log you can't read
+would otherwise lock you out after every redeploy. The `admin` account can then create further
+accounts (`POST /admin/users`) at whatever role each analyst needs.
 
 **Tests** (304 Python + 51 jsdom: scope enforcement, all 6 parsers, correlation/dedup, risk scoring &
 CVSS-vector parsing (incl. boundary cases), candidate-based planning + bounded LLM arbitration (incl. a
@@ -129,7 +147,7 @@ license for live control of either — see `docs/INTEGRATIONS.md`.
 vapt_agent/
   models.py        common data model (Finding, Assessment, ScopeModel, ToolRun, Approval, ...)
   scope.py          scope/target enforcement, called before every scan/finding/validation
-  auth.py           per-analyst bearer tokens -> verified identities (what the audit log records)
+  accounts.py       username/password accounts, sessions, roles -> verified identities (what the audit log records)
   audit.py          append-only, hash-chained audit log
   planner.py        rules-first adaptive planning (+ optional LLM rationale phrasing)
   llm.py            optional Claude enrichment layer (explain-only, never decides)
