@@ -155,7 +155,7 @@ class Approval(BaseModel):
     tool: str = "metasploit"
     module: str = ""                  # supplied by the analyst, never invented by the agent
     requested_at: str = Field(default_factory=now)
-    requested_by: str = ""            # verified analyst identity (auth.py), never client-supplied
+    requested_by: str = ""            # verified analyst identity (accounts.py), never client-supplied
     state: Literal["pending", "approved", "denied", "executed", "failed"] = "pending"
     decided_by: str = ""
     executed_by: str = ""

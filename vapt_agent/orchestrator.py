@@ -42,7 +42,7 @@ class Orchestrator:
     # ---- lifecycle -----------------------------------------------------
     def create(self, request: str, scope: ScopeModel, actor: str = "analyst") -> Assessment:
         """`actor` is the verified analyst identity. The API layer always supplies it from the
-        authenticated token (auth.py); the default only exists for in-process use (demo scripts)."""
+        authenticated session (accounts.py); the default only exists for in-process use (demo scripts)."""
         problems = validate_scope(scope)
         if problems:
             raise ScopeError("; ".join(problems))

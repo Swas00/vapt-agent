@@ -102,12 +102,12 @@ project's primary defense, applied at three separate layers:
 
 - `ANTHROPIC_API_KEY` is read once from the environment and never logged, printed, or included in
   any API response. The two places an LLM call can fail (`llm.summarize_assessment`,
-  `reasoning.arbitrate`) now log a warning on fallback (PL-7) with `exc_info=True`; this logs the
-  *exception*, not request/response bodies, and the Anthropic SDK does not echo the API key back in
-  its own exception messages -- but a residual, low-probability risk is noted here rather than left
-  silent: if a future SDK version ever did include a credential in an exception's string
-  representation, it would currently reach the log. Mitigation if that's ever a concern: scrub
-  `ANTHROPIC_API_KEY`'s value out of the exception string before logging it.
+  `reasoning.arbitrate`) log a warning on fallback (PL-7) built from `type(exc).__name__` plus
+  `_scrub_secret(str(exc))` -- not `exc_info=True` -- so that even in the case where a future SDK
+  version's exception string happened to include the configured key, `_scrub_secret` (present in
+  both `llm.py` and `reasoning.py`) strips it before the line ever reaches the log. Covered by
+  `test_api_key_is_redacted_even_if_the_exception_message_contains_it` in both `tests/test_llm.py`
+  and `tests/test_reasoning.py`.
 - Analyst session tokens live only in an HttpOnly cookie (web UI) or are passed explicitly as a
   bearer header (scripts) -- never in `localStorage`/`sessionStorage`, never in a URL, never
   logged.
