@@ -77,8 +77,8 @@ changes needed, same adapters.
 | # | Requirement | Status | Notes |
 |---|---|---|---|
 | 5.1 | Scope enforcement: register targets/exclusions/permissions/boundaries, reject out-of-scope actions | ✅ | `scope.py`, called before every scan/finding/validation |
-| 5.2 | Adaptive planning: select tools from discovered hosts/services/tech, explain rationale | ✅ | Web/SMB/FTP/TLS/DB-port triggers (`_candidates_from_services`) plus finding-severity triggers (`_candidates_from_findings`) with topically-matched corroboration (an infra CVE gets `nmap vulners`; a web finding gets a second web tool). ⬜ DNS/SNMP triggers still not added — low-value, left for later. |
-| 5.3 | Scan orchestration: execute, monitor, handle timeouts/errors, record status | 🟡 | Timeouts/errors/status all recorded on `ToolRun`; ⬜ execution is synchronous/blocking, no background job polling for long-running scans |
+| 5.2 | Adaptive planning: select tools from discovered hosts/services/tech, explain rationale | ✅ | Web/SMB/FTP/TLS/DB-port/DNS/SNMP triggers (`_candidates_from_services`) plus finding-severity triggers (`_candidates_from_findings`) with topically-matched corroboration (an infra CVE gets `nmap vulners`; a web finding gets a second web tool). |
+| 5.3 | Scan orchestration: execute, monitor, handle timeouts/errors, record status | ✅ | Timeouts/errors/status all recorded on `ToolRun`; `POST .../plan/{step}/run` dispatches via FastAPI `BackgroundTasks` (not synchronous/blocking) — the UI polls the resulting `ToolRun` until it leaves `running`, and a live scan can be cancelled mid-flight (A2: `orchestrator.cancel_run`, real subprocess termination). |
 | 5.4 | Normalization & correlation: common model, merge true duplicates without hiding assets/evidence | ✅ | `correlate.py` |
 | 5.5 | Evidence preserved: source tool, asset, timestamps, raw refs, evidence, confidence, confirmed/suspected | ✅ | `models.Finding` / `models.Evidence` |
 | 5.6 | Risk prioritization: severity/CVSS, exposure, exploitability, asset impact, confidence; no fabricated CVEs/scores | ✅ | `risk.py`; `cvss_estimated` flag whenever a score isn't tool-reported |
@@ -98,13 +98,13 @@ changes needed, same adapters.
 
 | Bonus item | Status | Gap |
 |---|---|---|
-| Multi-step adaptive replanning with state/memory | ✅ | State lives per-`Assessment` (in-memory, trivially persistable); planning now reacts to both *services* and a *finding's* severity/confidence (`orchestrator.analyse()` calls `planner.plan_from_findings()`) — a critical/high single-source finding automatically proposes a topically-matched confirmatory step. ⬜ still in-memory only, not durable across process restarts. |
+| Multi-step adaptive replanning with state/memory | ✅ | State is durable, not just in-memory: `AssessmentStore`/`BatchStore` (SQLite, `vapt_agent/store.py`) persist every `Assessment` across process restarts (FS-1, verified by `test_assessment_survives_a_simulated_restart`). Planning reacts to both *services* and a *finding's* severity/confidence (`orchestrator.analyse()` calls `planner.plan_from_findings()`) — a critical/high single-source finding automatically proposes a topically-matched confirmatory step. |
 | All 7 adapters with reliable live/API support | 🟡 | All 7 exist; 3 are import-only by deliberate licensing/Gatekeeper decision (documented, not a gap to "fix" so much as a scope call) |
-| Confidence calibration, false-positive triage | 🟡 | Simple heuristic only (`single tool + info + low confidence → false_positive_candidate`); ⬜ no calibration against historical accuracy, no cross-check rules beyond that one |
-| Remediation tracking | ⬜ | Not implemented — no "remediated/open/retested" lifecycle field on findings |
-| Retesting / change comparison | ⬜ | Not implemented — no diff between two assessments of the same target |
-| Export formats beyond PDF | ⬜ | Only PDF; no JSON/CSV/HTML export |
-| Team workflows | ⬜ | `by` is a free-text string, not real multi-user auth/roles |
+| Confidence calibration, false-positive triage | ✅ | Two independent layers: (1) `calibration.py` (FS-6) nudges a new finding's confidence toward what same-signature findings (same CVE, or same title when there's no CVE) have *actually* been validated as across other assessments' human-approved outcomes — conservative by design (minimum sample size, capped shift, always recorded as an `[inference]`, never silently applied). (2) An analyst can explicitly mark any finding a false positive or overturn the system's own inference in either direction (A9: `orchestrator.set_false_positive`, UI "Mark FP"/"Not FP" buttons) — `models.is_false_positive()` is the single predicate every consumer (risk scoring, planner, report counts) reads, so the two layers can never disagree with each other. |
+| Remediation tracking | ✅ | `Finding.remediation_status` (`open → in_progress → fixed → retested`), settable via `POST .../findings/{id}/remediation`, shown + editable in the UI (read-only for `viewer` role), attributed to the analyst who changed it. |
+| Retesting / change comparison | ✅ | `GET /assessments/{after}/diff/{before}` (`diff.py`) computes new/fixed/persisting findings between two assessments of the same scope; surfaced in the UI's "Compare to a previous assessment" panel. |
+| Export formats beyond PDF | ✅ | `POST .../evidence-pack` bundles the PDF report, the assessment's scoped slice of the hash-chained audit log, and every raw tool-output file into a downloadable zip — independently verifiable provenance, not just the report. |
+| Team workflows | ✅ | Real multi-user accounts (`accounts.py`): username/password login, server-side sessions, four ordered roles (`viewer < analyst < lead < admin`) with actual separation of duties enforced server-side (requesting active validation needs `analyst`; approving/executing it needs `lead`+). `by` is never client-supplied free text — every attribution field is the verified session's own username. |
 
 ## 8. Standards & Reference Frameworks
 
@@ -129,7 +129,7 @@ get no tag).
 |---|---|---|
 | 9.1 Working agent demonstrated against an organizer-authorized lab target | 🟡 | Demonstrated against our own fixtures + localhost; ⬜ **re-run once organizers hand out the actual lab target** |
 | 9.2 Architecture overview (models, orchestration, adapters, data flow, state/memory, security boundaries) | ✅ | `docs/ARCHITECTURE.md` |
-| 9.3 Sample AI-generated, evidence-backed VAPT report (PDF) | 🟡 | `demo.py` generates one at `data/sample_report.pdf`, but `data/` is **gitignored** — ⬜ **commit a copy somewhere tracked** (e.g. `docs/sample_report.pdf`) before submission |
+| 9.3 Sample AI-generated, evidence-backed VAPT report (PDF) | ✅ | Committed and tracked at `docs/sample_report.pdf`; `demo.py` regenerates the live equivalent at `data/sample_report.pdf` (gitignored, since it's a build artifact). |
 | 9.4 Source repository: setup, dependencies, licensing, execution instructions | ✅ | `README.md`, `requirements.txt`, pushed to [github.com/Swas00/vapt-agent](https://github.com/Swas00/vapt-agent) |
 | 9.5 Human-approval demonstration + decision/audit trace | ✅ | approval workflow + hash-chained `audit.py`; ⬜ **record an actual demo clip/walkthrough for judges** (this is a presentation task, not code) |
 | 9.6 Integration status matrix: limitations, assumptions, unsupported scenarios | ✅ | `docs/INTEGRATIONS.md` |
@@ -141,7 +141,7 @@ get no tag).
 | 1 | Authorized target + conversational request, scope validation shown | ✅ | UI: targets/exclusions/attestation fields |
 | 2 | Agent generates plan with tool selections + reasoning | ✅ | plan panel shows rationale per step |
 | 3 | Execute/import multi-tool assessments with genuine status | ✅ | run/import buttons, real `ToolRun.status` |
-| 4 | Normalization, correlation, dup/false-positive handling, uncertainty | 🟡 | works, but UI doesn't strongly *visualize* merged-finding count / false-positive tag — ⬜ polish the finding card to show `merged_from` and highlight `false_positive_candidate` |
+| 4 | Normalization, correlation, dup/false-positive handling, uncertainty | ✅ | Finding cards show a "⇄ N tools merged" badge when `merged_from` is non-empty, and a false-positive badge distinguishing the system's own inference ("possible false positive") from an analyst's explicit, overriding verdict ("false positive (confirmed)", with Mark FP / Not FP controls). |
 | 5 | Severity/risk prioritization + explicit approval checkpoint | ✅ | priority badges + approve/deny buttons |
 | 6 | Download report, trace a finding back to source evidence | ✅ | evidence snippet + raw_ref + a truncated SHA-256 of the raw artifact file shown per evidence item in the PDF, for a verifiable chain-of-custody story |
 | 7 | Safe failure handling + honest unsupported-integration disclosure | ✅ | `ToolRun.status` failure modes recorded + shown in limitations; integration matrix is honest |
@@ -154,10 +154,10 @@ live, not just in theory.
 
 | Criterion | Pts | Current strength | Priority to improve |
 |---|---|---|---|
-| AI Reasoning & Decisions | **20** | ✅ candidate generation reacts to both services and finding severity; optional bounded LLM arbitration genuinely keeps/defers/explains among competing candidates (never just rephrasing), with a closed-id-set safety property tested against adversarial input | low — further upside only in richer candidate types (e.g. DNS/SNMP triggers, remediation-aware replanning) |
+| AI Reasoning & Decisions | **20** | ✅ candidate generation reacts to both services (incl. DNS/SNMP) and finding severity; optional bounded LLM arbitration genuinely keeps/defers/explains among competing candidates (never just rephrasing), with a closed-id-set safety property tested against adversarial input | low — further upside only in richer candidate types (e.g. remediation-aware replanning) |
 | End-to-End Coverage | 15 | ✅ strong | low |
 | Technical Accuracy | 15 | ✅ strong | low |
-| Correlation & False Positives | 15 | 🟡 good, heuristic is simple | medium |
+| Correlation & False Positives | 15 | ✅ merge keeps all evidence/tools; false-positive signal now has two independent layers — historical-outcome calibration (`calibration.py`) and explicit analyst override (A9) that can never disagree with each other | low |
 | Risk Prioritization | 10 | ✅ strong, transparent formula | low |
 | Safety & Scope Control | 10 | ✅ strong | low |
 | Report Quality | 10 | ✅ per-finding business + technical impact statements grounded in asset criticality/exposure class/CVSS vector, an at-a-glance stats table, an "assets actually tested" table distinct from scope, MITRE/CSF framework references, and evidence SHA-256 traceability | low |
@@ -180,26 +180,21 @@ attributable (`audit.py`).
 
 ---
 
-## Prioritized TODO list (in order of expected impact)
+## Remaining TODO list
 
-1. ~~**Deepen AI reasoning**~~ — **done.** `planner.py` now generates candidates from both services
-   and finding severity/confidence; `reasoning.py` adds an optional, strictly bounded LLM arbitration
-   pass (closed candidate-id set, validated, with a tested prompt-injection defense); deferred
-   candidates stay visible on the plan as `status="skipped"` with a recorded reason. See
-   `docs/ARCHITECTURE.md` §2a and `tests/test_reasoning.py` / `tests/test_planner.py`.
-2. **Commit a tracked sample report** — `data/` is gitignored; add a sample PDF somewhere tracked
-   (e.g. `docs/sample_report.pdf`) for deliverable 9.3.
-3. ~~**Add MITRE ATT&CK / NIST CSF 2.0 references**~~ — **done**, see §8: `frameworks.py`, wired into
-   `orchestrator.analyse()`, shown in both the PDF report and the UI.
-4. ~~**Polish report §7.5**~~ — **done**: `impact_statement()` in `report.py` builds a grounded
-   business + technical impact sentence per critical/high finding from asset criticality, exposure
-   class, CVSS-vector C/I/A components (parsed in `risk.py`), and corroboration/validation status —
-   never a generic severity label. Also added: an at-a-glance stats table (§1), an "assets actually
-   tested" table distinct from the authorized scope (§2), and evidence SHA-256 per item (§4).
-5. ~~**Finding-driven (not just service-driven) replanning**~~ — **done**, see item 1.
-6. ~~**UI polish for judging-checklist item 6**~~ — **done**, evidence SHA-256 now in the PDF (see
-   item 4 above). Item 4 (dedup/false-positive visibility) is now addressed both on the plan's
-   "alternatives considered" panel and on finding cards (dedup/false-positive badges, §UI).
-7. **Rehearse failure/rejection demo moments** before the live round.
-8. Optional/lower priority: remediation tracking, retest/diff, export formats, real multi-user auth,
-   DNS/SNMP planning triggers — genuinely "bonus," worth doing only if time remains after 2–4.
+Every item that was code work on this list has shipped: deeper AI reasoning (bounded LLM
+arbitration), MITRE ATT&CK/NIST CSF references, grounded per-finding impact statements, a tracked
+sample report (`docs/sample_report.pdf`), finding-driven replanning, finding-card dedup/FP
+visualization, remediation tracking, retest/diff, exports beyond PDF, real multi-user
+roles/accounts, DNS/SNMP planning triggers, and (added after this checklist was first written)
+live scan cancellation (A2), explicit analyst false-positive override (A9), per-tool upload
+extension validation (B3), a full negative-path API test suite (F2), and a real keyboard-nav/
+screen-reader accessibility audit (C1/F5) — see `docs/HACKATHON_ROADMAP.md` for the full ledger.
+
+What's left is not code, and this document shouldn't claim otherwise:
+1. **9.1**: re-run `demo.py`/`live_demo.py` against the organizer's actual lab target once issued —
+   genuinely blocked on an address this project has no way to obtain; see `docs/HACKATHON_ROADMAP.md`
+   item A4 for the full disposition.
+2. **9.5 / judges' checklist item 7**: record an actual demo clip/walkthrough, and rehearse one
+   scope-rejection and one tool-failure moment live so judges see graceful handling in person, not
+   just in the code.
